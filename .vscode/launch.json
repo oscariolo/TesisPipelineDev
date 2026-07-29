@@ -1,0 +1,88 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Ollama (generative)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "module": "main",
+      "args": [
+        "--mode", "generative",
+        "--backend", "ollama",
+        "--model-name", "hf.co/unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q3_K_XL"
+      ]
+    },
+    {
+      "name": "Hugging Face (generative)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "module": "main",
+      "args": [
+        "--mode", "generative",
+        "--backend", "huggingface",
+        "--model-name", "deepseek-ai/DeepSeek-V4-Flash",
+        "--hf-device", "auto"
+      ]
+    },
+    {
+      "name": "Hugging Face (CPU)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "module": "main",
+      "args": [
+        "--mode", "generative",
+        "--backend", "huggingface",
+        "--model-name", "microsoft/Phi-3-mini-4k-instruct",
+        "--hf-device", "cpu"
+      ]
+    },
+    {
+      "name": "Ollama (thinking)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "module": "main",
+      "args": [
+        "--mode", "generative",
+        "--backend", "ollama",
+        "--model-name", "qwen3.6:latest"
+      ],
+      "env": { "THINKING": "true" }
+    },
+    {
+      "name": "Embedding (stub)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "module": "main",
+      "args": [
+        "--mode", "embedding"
+      ]
+    },
+    {
+      "name": "Custom args",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "module": "main",
+      "args": [
+        "--mode", "generative",
+        "--backend", "ollama",
+        "--model-name", "qwen3.6:latest",
+        "--ollama-host", "localhost",
+        "--ollama-port", "11434",
+        "--log-dir", "./logs",
+        "--output-dir", "./analysis"
+      ]
+    }
+  ]
+}

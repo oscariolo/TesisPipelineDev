@@ -6,10 +6,24 @@ from log_analysis.core.log_ingestor import LogIngestor
 from log_analysis.core.pipeline import Pipeline
 from log_analysis.models.embedding import EmbeddingModel
 from log_analysis.models.generative import GenerativeConfig, GenerativeModel
+from log_analysis.observability import init_observability
 from log_analysis.output.json_writer import JsonWriter
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+#init_observability()
 
+#logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+
+models = [
+    "openai-community/gpt2",
+    "qwen3.6:latest",
+    "Qwen/Qwen3.6-35B-A3B",
+    #"deepseek-ai/DeepSeek-V4-Flash" #Too big
+    "unsloth/Qwen3.6-27B-MTP-GGUF"
+
+]
+
+huggingFaceToken = ""
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Log Analysis Pipeline")
@@ -34,6 +48,7 @@ def main() -> None:
             ollama_port=args.ollama_port,
             hf_device=args.hf_device,
             thinking=False,  # Set to True if you want to enable thinking mode
+            token=huggingFaceToken,
         )
         model = GenerativeModel(config)
     else:
