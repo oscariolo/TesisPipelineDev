@@ -42,6 +42,8 @@ class GenerativeConfig(PydanticBaseModel):
     thinking: bool = False
     token: str = None  # Optional API token for Ollama or other services
     bit_precision: Optional[str] = None  # e.g., "fp16", "int8", etc. for Hugging Face models
+    tokenizer_name: Optional[str] = None  # e.g., base model repo when loading a GGUF model
+    gguf_file: Optional[str] = None  # e.g., "Qwen3.6-27B-Q4_K_M.gguf" for GGUF repos
 
 
 
@@ -55,11 +57,15 @@ class GenerativeModel(BaseModel):
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         logger.info("Loading HF model %s on %s", self.config.model_name, self.config.hf_device)
-        self._tokenizer = AutoTokenizer.from_pretrained(self.config.model_name, token=self.config.token)
+        kwargs = {"token": self.config.token}
+        if self.config.gguf_file:
+            kwargs["gguf_file"] = self.config.gguf_file
+        tokenizer_name = self.config.tokenizer_name or self.config.model_name
+        self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, **kwargs)
         self._model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
             device_map=self.config.hf_device,
-            token=self.config.token
+            **kwargs
         )
 
     def _call_hf(self, prompt: str) -> str:

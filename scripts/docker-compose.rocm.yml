@@ -1,0 +1,12 @@
+services:
+  ollama:
+    devices:
+      - /dev/kfd
+      - /dev/dri/card0
+      - /dev/dri/renderD128
+
+  log-analysis:
+    devices:
+      - /dev/kfd
+      - /dev/dri/card0
+      - /dev/dri/renderD128
