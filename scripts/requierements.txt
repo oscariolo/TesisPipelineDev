@@ -85,3 +85,5 @@ wrapt==2.2.2
 sentencepiece
 tiktoken
 protobuf
+pymilvus[milvus_lite]
+sentence-transformers

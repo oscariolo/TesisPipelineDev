@@ -4,33 +4,21 @@ import re
 import time
 from typing import Optional
 
-from opentelemetry import metrics, trace
 from pydantic import BaseModel as PydanticBaseModel
 
-from log_analysis.core.log_entry import LogEntry, AnalysisResult
+from log_analysis.core.log_entry import LogBatch, BatchAnalysisResult
 from log_analysis.models.base import BaseModel
 
 logger = logging.getLogger(__name__)
 
-tracer = trace.get_tracer("log-analysis.models")
-meter = metrics.get_meter("log-analysis.models")
-
-llm_input_tokens = meter.create_counter("llm.tokens.input", unit="tokens")
-llm_output_tokens = meter.create_counter("llm.tokens.output", unit="tokens")
-llm_call_duration = meter.create_histogram(
-    "llm.call.duration", unit="s", description="LLM call duration"
-)
-
-PROMPT_TEMPLATE = """Analyze this server log entry. Respond ONLY with valid JSON in this exact format (no other text):
+PROMPT_TEMPLATE = """Determine if there is an error in this group of logs.Respond ONLY with valid JSON in this exact format, do not include any extra text or explanations:
 {{
   "is_error": true or false,
   "error_description": "brief description of the error or null",
   "recommended_action": "what action to take or null"
 }}
 
-Log entry: {raw_text}
-
-JSON response:"""
+Log entry: {raw_text}"""
 
 
 class GenerativeConfig(PydanticBaseModel):
@@ -101,38 +89,23 @@ class GenerativeModel(BaseModel):
             logger.warning("Failed to parse JSON from model output: %.200s", text)
             return {"is_error": False, "error_description": None, "recommended_action": None}
 
-    def analyze(self, entry: LogEntry) -> AnalysisResult:
-        with tracer.start_as_current_span("llm.analyze") as span:
-            span.set_attributes({
-                "log.index": entry.index,
-                "llm.model": self.config.model_name,
-                "llm.backend": self.config.backend,
-                "llm.thinking": self.config.thinking,
-            })
+    def analyze(self, batch: LogBatch) -> BatchAnalysisResult:
+        batch_text = "\n".join(f"[{entry.index}] {entry.raw_text}" for entry in batch.entries)
+        prompt = PROMPT_TEMPLATE.format(raw_text=batch_text)
+        start = time.perf_counter()
 
-            prompt = PROMPT_TEMPLATE.format(raw_text=entry.raw_text)
-            start = time.perf_counter()
+        if self.config.backend == "ollama":
+            raw_output = self._call_ollama(prompt)
+        else:
+            raw_output = self._call_hf(prompt)
 
-            if self.config.backend == "ollama":
-                raw_output = self._call_ollama(prompt)
-            else:
-                raw_output = self._call_hf(prompt)
+        elapsed = time.perf_counter() - start
+        logger.info("LLM batch #%d analyzed in %.3fs", batch.batch_id, elapsed)
 
-            elapsed = time.perf_counter() - start
-            llm_call_duration.record(elapsed)
-            span.set_attribute("llm.duration_s", elapsed)
-
-            input_tokens = len(prompt.split())
-            output_tokens = len(raw_output.split())
-            llm_input_tokens.add(input_tokens, {"llm.model": self.config.model_name, "llm.backend": self.config.backend})
-            llm_output_tokens.add(output_tokens, {"llm.model": self.config.model_name, "llm.backend": self.config.backend})
-
-            data = self._parse_response(raw_output)
-            result = AnalysisResult(
-                log_index=entry.index,
-                is_error=data.get("is_error", False),
-                error_description=data.get("error_description"),
-                recommended_action=data.get("recommended_action"),
-            )
-            span.set_attribute("result.is_error", result.is_error)
-            return result
+        data = self._parse_response(raw_output)
+        error_found = bool(data.get("is_error", False))
+        return BatchAnalysisResult(
+            batch_id=batch.batch_id,
+            error_found=error_found,
+            error_count=1 if error_found else 0,
+        )

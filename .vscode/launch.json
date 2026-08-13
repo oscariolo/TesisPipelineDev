@@ -24,8 +24,8 @@
       "args": [
         "--mode", "generative",
         "--backend", "huggingface",
-        "--model-name", "deepseek-ai/DeepSeek-V4-Flash",
-        "--hf-device", "auto"
+        "--model-name", "HuggingFaceTB/SmolLM2-1.7B",
+        "--hf-device", "cuda:0"
       ]
     },
     {
@@ -57,14 +57,45 @@
       "env": { "THINKING": "true" }
     },
     {
-      "name": "Embedding (stub)",
+      "name": "Embedding (Ollama fallback)",
       "type": "debugpy",
       "request": "launch",
       "cwd": "${workspaceFolder}/scripts",
       "python": "${workspaceFolder}/scripts/.venv/bin/python",
       "module": "main",
       "args": [
-        "--mode", "embedding"
+        "--mode", "embedding",
+        "--backend", "ollama",
+        "--model-name", "qwen3.6:latest",
+        "--ollama-host", "localhost",
+        "--ollama-port", "11434",
+        "--embedding-model-name", "sentence-transformers/all-MiniLM-L6-v2",
+        "--embedding-db", "./embeddings/log_embeddings.db",
+        "--embedding-threshold", "0.8",
+        "--hf-device", "cuda:0",
+        "--log-dir", "./logs",
+        "--output-dir", "./analysis",
+        "--batch-size", "10"
+      ]
+    },
+    {
+      "name": "Embedding (Hugging Face fallback)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "module": "main",
+      "args": [
+        "--mode", "embedding",
+        "--backend", "huggingface",
+        "--model-name", "HuggingFaceTB/SmolLM2-1.7B",
+        "--hf-device", "cuda:0",
+        "--embedding-model-name", "sentence-transformers/all-MiniLM-L6-v2",
+        "--embedding-db", "./embeddings/log_embeddings.db",
+        "--embedding-threshold", "0.8",
+        "--log-dir", "./logs",
+        "--output-dir", "./analysis",
+        "--batch-size", "10"
       ]
     },
     {
