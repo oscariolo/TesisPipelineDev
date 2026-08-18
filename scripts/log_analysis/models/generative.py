@@ -107,5 +107,5 @@ class GenerativeModel(BaseModel):
         return BatchAnalysisResult(
             batch_id=batch.batch_id,
             error_found=error_found,
-            error_count=1 if error_found else 0,
+            model_name=self.config.model_name if hasattr(self.config, "model_name") else None,
         )

@@ -23,7 +23,8 @@ class AnalysisResult(BaseModel):
 class BatchAnalysisResult(BaseModel):
     batch_id: int
     error_found: bool = False
-    error_count: int = 0
+    model_name: Optional[str] = None
+    embedder_model_name: Optional[str] = None
     results: list[AnalysisResult] = []
 
     @property
@@ -38,4 +39,6 @@ class BatchAnalysisResult(BaseModel):
         return {
             "batch_id": self.batch_id,
             "error_found": self.error_found,
+            "model_name": self.model_name,
+            "embedder_model_name": self.embedder_model_name,
         }

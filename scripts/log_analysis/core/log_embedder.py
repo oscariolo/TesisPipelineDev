@@ -32,8 +32,8 @@ class LogVectorStore:
         schema.add_field("vector", DataType.FLOAT_VECTOR, dim=self.dimension)
         schema.add_field("raw_text", DataType.VARCHAR, max_length=65535)
         schema.add_field("is_error", DataType.BOOL)
-        schema.add_field("error_description", DataType.VARCHAR, max_length=4096, nullable=True)
-        schema.add_field("recommended_action", DataType.VARCHAR, max_length=4096, nullable=True)
+        schema.add_field("model_name", DataType.VARCHAR, max_length=256, nullable=True)
+        schema.add_field("embedder_model_name", DataType.VARCHAR, max_length=256, nullable=True)
         index_params = self.client.prepare_index_params()
         index_params.add_index("vector", index_type="FLAT", metric_type="COSINE")
         self.client.create_collection(self.collection_name, schema=schema)
@@ -51,7 +51,7 @@ class LogVectorStore:
             collection_name=self.collection_name,
             data=[vector],
             limit=top_k,
-            output_fields=["raw_text", "is_error", "error_description", "recommended_action"],
+            output_fields=["raw_text", "is_error","model_name", "embedder_model_name"],
         )
         hits = results[0] if results else []
         return hits or None
@@ -67,7 +67,7 @@ class LogVectorStore:
             collection_name=self.collection_name,
             data=vectors,
             limit=top_k,
-            output_fields=["raw_text", "is_error", "error_description", "recommended_action"],
+            output_fields=["raw_text", "is_error", "model_name", "embedder_model_name"],
         )
         return results if results else [[] for _ in vectors]
 
@@ -76,8 +76,8 @@ class LogVectorStore:
         vector: list,
         raw_text: str,
         is_error: bool,
-        error_description: Optional[str],
-        recommended_action: Optional[str],
+        model_name: Optional[str] = None,
+        embedder_model_name: Optional[str] = None,
     ) -> None:
         self.client.insert(
             self.collection_name,
@@ -86,8 +86,8 @@ class LogVectorStore:
                     "vector": vector,
                     "raw_text": raw_text,
                     "is_error": is_error,
-                    "error_description": error_description or None,
-                    "recommended_action": recommended_action or None,
+                    "model_name": model_name or None,
+                    "embedder_model_name": embedder_model_name or None,
                 }
             ],
         )

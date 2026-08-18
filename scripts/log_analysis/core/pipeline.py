@@ -37,15 +37,15 @@ class Pipeline:
             result = BatchAnalysisResult(
                 batch_id=batch.batch_id,
                 error_found=True,
-                error_count=len(batch.entries),
+                model_name=self.model.config.generative.model_name if hasattr(self.model, "config") else None,
+                embedder_model_name=self.model.config.embedder_model_name if hasattr(self.model, "config") else None,
             )
 
         elapsed = time.perf_counter() - start
         logger.info(
-            "Batch #%d complete in %.3fs: error_found=%s, error_count=%d",
+            "Batch #%d complete in %.3fs: error_found=%s",
             batch.batch_id,
             elapsed,
             result.error_found,
-            result.error_count,
         )
         return result

@@ -13,7 +13,7 @@ from log_analysis.output.json_writer import JsonWriter
 
 #init_observability()
 
-#logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
 models = [

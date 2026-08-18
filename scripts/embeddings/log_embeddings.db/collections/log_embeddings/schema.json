@@ -58,8 +58,8 @@
       "element_type": null,
       "is_primary": false,
       "max_capacity": null,
-      "max_length": 4096,
-      "name": "error_description",
+      "max_length": 256,
+      "name": "model_name",
       "nullable": true
     },
     {
@@ -70,8 +70,8 @@
       "element_type": null,
       "is_primary": false,
       "max_capacity": null,
-      "max_length": 4096,
-      "name": "recommended_action",
+      "max_length": 256,
+      "name": "embedder_model_name",
       "nullable": true
     }
   ],

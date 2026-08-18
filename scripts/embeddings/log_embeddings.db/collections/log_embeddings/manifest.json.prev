@@ -1,6 +1,6 @@
 {
-  "active_wal_number": 2,
-  "current_seq": 8,
+  "active_wal_number": null,
+  "current_seq": 0,
   "index_specs": {
     "vector": {
       "build_params": {},
@@ -13,12 +13,10 @@
   "manifest_format_version": 2,
   "partitions": {
     "_default": {
-      "data_files": [
-        "data/data_000001_000008.parquet"
-      ],
+      "data_files": [],
       "delta_files": []
     }
   },
   "schema_version": 1,
-  "version": 2
+  "version": 1
 }

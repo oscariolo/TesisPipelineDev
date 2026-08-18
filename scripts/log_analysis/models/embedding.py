@@ -81,12 +81,17 @@ class EmbeddingModel(BaseModel):
         distance = hits[0].get("distance", 0.0) if hits else 0.0
 
         if hits and distance >= self.config.similarity_threshold:
-            print(f"Reusing cached classification for batch #{batch.batch_id} (distance={distance:.4f})")
+            logger.info(
+                "Batch #%d matched existing embedding with distance %.4f, skipping LLM",
+                batch.batch_id,
+                distance,
+            )
             entity = hits[0].get("entity", {})
             return BatchAnalysisResult(
                 batch_id=batch.batch_id,
                 error_found=bool(entity.get("is_error", False)),
-                error_count=1 if entity.get("is_error", False) else 0,
+                model_name=entity.get("model_name", None),
+                embedder_model_name=entity.get("embedder_model_name", None),
                 results=[],
             )
 
@@ -96,14 +101,15 @@ class EmbeddingModel(BaseModel):
             vector,
             batch_text,
             fallback_result.error_found,
-            None,
-            None,
+            embedder_model_name=self.config.embedding_model_name,
+            model_name=fallback_result.model_name
         )
 
         return BatchAnalysisResult(
             batch_id=batch.batch_id,
             error_found=fallback_result.error_found,
-            error_count=fallback_result.error_count,
+            model_name=fallback_result.model_name,
+            embedder_model_name=self.config.embedding_model_name,
             results=[],
         )
 
