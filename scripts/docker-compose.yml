@@ -16,16 +16,42 @@
 #     --backend huggingface --model-name microsoft/Phi-3-mini-4k-instruct
 
 services:
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "${OLLAMA_HOST_PORT:-11434}:11434"
+  #   volumes:
+  #     - ollama-models:/root/.ollama
+  #   post_start:
+  #     - command: ollama pull hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
+  #     - command: ollama run hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
+  #   healthcheck:
+  #     test: ["CMD", "ollama", "list"]
+  #     interval: 10s
+  #     retries: 5
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:rocm
     ports:
       - "${OLLAMA_HOST_PORT:-11434}:11434"
     volumes:
       - ollama-models:/root/.ollama
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    post_start:
+      - command: ollama pull hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
+      - command: ollama run hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
       retries: 5
+  
+  grafana:
+    image: grafana/grafana-enterprise
+    ports:
+      - "${GRAFANA_HOST_PORT:-3000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
 
   log-analysis:
     build:
@@ -46,12 +72,15 @@ services:
       ollama:
         condition: service_healthy
     command: >
-      --mode generative
-      --backend huggingface
-      --model-name Qwen/Qwen2.5-1.5B-Instruct
+      --mode embedding
+      --backend ollama
+      --model-name hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
+      --embedding-model-name sentence-transformers/all-MiniLM-L6-v2
       --ollama-host ollama
+      --ollama-port 11434
       --hf-device cuda
 
 volumes:
   ollama-models:
   hf-models:
+  grafana-data:
