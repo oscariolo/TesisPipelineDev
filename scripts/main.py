@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from log_analysis.core.log_ingestor import FileLogIngestor, StreamLogIngestor
+from log_analysis.core.log_ingestor import FileLogIngestor, StreamLogIngestor, JsonLogIngestor
 from log_analysis.core.pipeline import Pipeline
 from log_analysis.models.embedding import EmbeddingConfig, EmbeddingModel
 from log_analysis.models.generative import GenerativeConfig, GenerativeModel
@@ -25,7 +25,8 @@ models = [
 ]
 
 load_dotenv()
-huggingFaceToken = os.getenv("HF_TOKEN", None)
+# huggingFaceToken = os.getenv("HF_TOKEN", None)
+huggingFaceToken = os.getenv("HF_TOKEN", "")
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Log Analysis Pipeline")
@@ -40,6 +41,7 @@ def main() -> None:
     parser.add_argument("--embedding-model-name", default="sentence-transformers/all-MiniLM-L6-v2", help="Sentence embedding model for embedding mode")
     parser.add_argument("--embedding-db", default="./embeddings/log_embeddings.db", help="Milvus Lite .db file storing classified log embeddings")
     parser.add_argument("--embedding-threshold", type=float, default=0.8, help="Minimum cosine similarity to reuse a stored classification")
+    parser.add_argument("--json-file", default=None, help="Path to a JSON file containing parsed logs to ingest")
     parser.add_argument("--log-dir", type=Path, default="./logs")
     parser.add_argument("--output-dir", type=Path, default="./analysis")
     parser.add_argument("--batch-size", type=int, default=100)
@@ -47,7 +49,9 @@ def main() -> None:
     parser.add_argument("--poll-interval", type=float, default=5.0, help="Seconds to wait between stream batch reads")
     args = parser.parse_args()
 
-    if args.stream_url:
+    if args.json_file:
+        ingestor = JsonLogIngestor(args.json_file, batch_size=args.batch_size)
+    elif args.stream_url:
         ingestor = StreamLogIngestor(args.stream_url, batch_size=args.batch_size, poll_interval=args.poll_interval)
     else:
         ingestor = FileLogIngestor(args.log_dir, batch_size=args.batch_size)

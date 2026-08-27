@@ -3,6 +3,7 @@ import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Generator
+import json
 
 import httpx
 
@@ -97,3 +98,52 @@ class StreamLogIngestor(LogIngestor):
                 batch_id += 1
             logger.info("Batch exhausted — polling %s again in %.1fs", self.url, self.poll_interval)
             time.sleep(self.poll_interval)
+
+
+class JsonLogIngestor(LogIngestor):
+    """
+    Ingestor diseñado para leer archivos JSON procesados previamente (ej. por parse_and_label.py),
+    extrayendo unicamente el 'template' del log para ahorrar tokens en el SLM.
+    """
+    def __init__(self, json_path: str | Path, batch_size: int = 100):
+        super().__init__(batch_size)
+        self.json_path = Path(json_path)
+
+    def iter_batches(self) -> Generator[LogBatch, None, None]:
+        if not self.json_path.exists():
+            raise FileNotFoundError(f"JSON file not found: {self.json_path}")
+            
+        with open(self.json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        batch_id = 0
+        entries: list[LogEntry] = []
+        global_idx = 0
+        
+        for item in data:
+            # Extraer de tu estructura JSON el 'template'
+            # (fallback a 'raw_message' por si el json esta incompleto)
+            try:
+                log_data = item.get("log_data", {})
+                template_text = log_data.get("template") or log_data.get("raw_message", "")
+                if not template_text:
+                    continue
+            except AttributeError:
+                # En caso de que un item no sea un diccionario valido
+                continue
+                
+            entries.append(
+                LogEntry(
+                    index=global_idx,
+                    source_file=self.json_path.name,
+                    raw_text=template_text,
+                )
+            )
+            global_idx += 1
+            if len(entries) >= self.batch_size:
+                yield LogBatch(batch_id=batch_id, entries=entries)
+                batch_id += 1
+                entries = []
+                
+        if entries:
+            yield LogBatch(batch_id=batch_id, entries=entries)
