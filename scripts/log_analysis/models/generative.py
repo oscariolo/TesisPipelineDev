@@ -8,6 +8,7 @@ from pydantic import BaseModel as PydanticBaseModel
 
 from log_analysis.core.log_entry import LogBatch, BatchAnalysisResult
 from log_analysis.models.base import BaseModel
+import ollama
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ Log entry: {raw_text}"""
 class GenerativeConfig(PydanticBaseModel):
     model_name: str
     backend: str
+    chatRefresh: Optional[str] = "perPrompt" # "windowLimit" will keep context until reaches context window limit, "perPrompt" will reset for each prompt (default), None will keep context indefinitely
+    contextWindow: Optional[int] = None #by default tries to get the maximum context window from the model
     ollama_host: str = "localhost"
     ollama_port: int = 11434
     hf_device: str = "cpu"
@@ -40,6 +43,17 @@ class GenerativeModel(BaseModel):
         self.config = config
         self._model = None
         self._tokenizer = None
+        self._context_window = config.contextWindow or self.getMaxContextWindow()
+    
+
+    def getMaxContextWindow(self) -> int:
+        if self.config.backend == "ollama":
+            host = f"http://{self.config.ollama_host}:{self.config.ollama_port}"
+            client = ollama.Client(host=host)
+            details = client.show(model=self.config.model_name)
+            maxWindow = details.get("modelinfo", {}).get("llama.context_length", 4096)
+            return maxWindow
+        return 4096
 
     def _load_hf(self):
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -67,14 +81,16 @@ class GenerativeModel(BaseModel):
         return full_output[len(prompt):].strip()
 
     def _call_ollama(self, prompt: str) -> str:
-        import ollama
 
         host = f"http://{self.config.ollama_host}:{self.config.ollama_port}"
         client = ollama.Client(host=host)
         response = client.chat(
             model=self.config.model_name,
             messages=[{"role": "user", "content": prompt}],
-            think=self.config.thinking
+            think=self.config.thinking,
+            options={
+                "num_ctx": self._context_window,
+            }
         )
         return response["message"]["content"].strip()
 

@@ -47,6 +47,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--stream-url", default=None, help="Read logs as a stream from this service URL instead of a file")
     parser.add_argument("--poll-interval", type=float, default=5.0, help="Seconds to wait between stream batch reads")
+    parser.add_argument("--contextWindow", type=int, default=None, help="Maximum context window for the model (default: auto-detect)")
     args = parser.parse_args()
 
     if args.json_file:
