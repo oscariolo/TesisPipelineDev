@@ -48,6 +48,8 @@ def main() -> None:
     parser.add_argument("--stream-url", default=None, help="Read logs as a stream from this service URL instead of a file")
     parser.add_argument("--poll-interval", type=float, default=5.0, help="Seconds to wait between stream batch reads")
     parser.add_argument("--contextWindow", type=int, default=None, help="Maximum context window for the model (default: auto-detect)")
+    parser.add_argument("--keepHistory", choices=["perPrompt", "always", "tokenLimit"], default="perPrompt", help="How to keep the conversation history")
+    parser.add_argument("--tokenLimitPercentage", type=float, default=1.0, help="Percentage of context window to trigger history clearing in tokenLimit mode")
     args = parser.parse_args()
 
     if args.json_file:
@@ -69,6 +71,8 @@ def main() -> None:
             token=huggingFaceToken,
             tokenizer_name=args.tokenizer_name,
             gguf_file=args.gguf_file,
+            keepHistory=args.keepHistory,
+            tokenLimitPercentage=args.tokenLimitPercentage,
         )
         model = GenerativeModel(config)
     else:
@@ -83,6 +87,8 @@ def main() -> None:
                 token=huggingFaceToken,
                 tokenizer_name=args.tokenizer_name,
                 gguf_file=args.gguf_file,
+                keepHistory=args.keepHistory,
+                tokenLimitPercentage=args.tokenLimitPercentage,
             ),
             embedding_model_name=args.embedding_model_name,
             db_path=args.embedding_db,

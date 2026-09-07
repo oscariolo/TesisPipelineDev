@@ -110,7 +110,7 @@ class EmbeddingModel(BaseModel):
             error_found=fallback_result.error_found,
             model_name=fallback_result.model_name,
             embedder_model_name=self.config.embedding_model_name,
-            results=[],
+            token_usage=fallback_result.token_usage
         )
 
     ##Droping database ONLY FOR TESTING PURPOSES

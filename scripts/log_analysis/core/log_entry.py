@@ -15,7 +15,6 @@ class LogBatch(BaseModel):
 
 class AnalysisResult(BaseModel):
     log_index: int
-    is_error: bool
     error_description: Optional[str] = None
     recommended_action: Optional[str] = None
 
@@ -25,7 +24,7 @@ class BatchAnalysisResult(BaseModel):
     error_found: bool = False
     model_name: Optional[str] = None
     embedder_model_name: Optional[str] = None
-    results: list[AnalysisResult] = []
+    token_usage: Optional[int] = None
 
     @property
     def is_error(self) -> bool:
@@ -41,4 +40,5 @@ class BatchAnalysisResult(BaseModel):
             "error_found": self.error_found,
             "model_name": self.model_name,
             "embedder_model_name": self.embedder_model_name,
+            "token_usage": self.token_usage,
         }
