@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping
 from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -100,14 +101,24 @@ class GenerativeModel(BaseModel):
         )
 
     def _call_hf(self) -> tuple[str, int]:
-        inputs = self._tokenizer.apply_chat_template(
-            self._messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_tensors="pt",
-        )
-        if not isinstance(inputs, dict):
-            inputs = {"input_ids": inputs}
+        if getattr(self._tokenizer, "chat_template", None):
+            inputs = self._tokenizer.apply_chat_template(
+                self._messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+        else:
+            prompt = "\n\n".join(
+                f"{message['role'].upper()}:\n{message['content']}"
+                for message in self._messages
+            )
+            prompt += "\n\nASSISTANT:\n"
+            inputs = self._tokenizer(prompt, return_tensors="pt")
+        if not isinstance(inputs, Mapping):
+            raise TypeError("Hugging Face tokenizer must return a mapping")
+        inputs = dict(inputs)
         device = next(self._model.parameters()).device
         inputs = {k: v.to(device) for k, v in inputs.items()}
         outputs = self._model.generate(**inputs, max_new_tokens=200)
@@ -132,15 +143,26 @@ class GenerativeModel(BaseModel):
         return response["message"]["content"].strip(), token_usage
 
     def _parse_response(self, text: str) -> dict:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            logger.warning("No JSON object found in model output: %.200s", text)
-            return {"is_error": False, "error_description": None, "recommended_action": None}
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse JSON from model output: %.200s", text)
-            return {"is_error": False, "error_description": None, "recommended_action": None}
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", text):
+            candidate = text[match.start():]
+            try:
+                json_result, _ = decoder.raw_decode(candidate)
+            except json.JSONDecodeError:
+                # Some models emit a closing parenthesis instead of the JSON brace.
+                if not candidate.rstrip().endswith(")"):
+                    continue
+                try:
+                    json_result = json.loads(candidate.rstrip()[:-1] + "}")
+                except json.JSONDecodeError:
+                    continue
+            if isinstance(json_result, dict):
+                json_result["is_valid_response"] = True
+                return json_result
+
+        logger.warning("Failed to parse JSON from model output: %.200s", text)
+        return {"is_valid_response": False}
+
 
 
     def analyze(self, batch: LogBatch) -> BatchAnalysisResult:
@@ -176,6 +198,7 @@ class GenerativeModel(BaseModel):
 
         data = self._parse_response(raw_output)
         error_found = bool(data.get("is_error", False))
+        is_valid_response = bool(data.get("is_valid_response", False))
 
         logger.info("Current token usage: %d, context window: %d", self._token_usage, self._context_window)
 
@@ -190,4 +213,6 @@ class GenerativeModel(BaseModel):
             error_found=error_found,
             model_name=self.config.model_name if hasattr(self.config, "model_name") else None,
             token_usage=self._token_usage,
+            is_valid_response=is_valid_response,
+            raw_response=raw_output
         )

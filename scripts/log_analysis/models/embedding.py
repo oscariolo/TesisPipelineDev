@@ -92,26 +92,23 @@ class EmbeddingModel(BaseModel):
                 error_found=bool(entity.get("is_error", False)),
                 model_name=entity.get("model_name", None),
                 embedder_model_name=entity.get("embedder_model_name", None),
+                is_valid_response=True, #if it was gotte from embedding store its assumed valid
                 results=[],
             )
 
         logger.info("Classifying batch #%d with LLM", batch.batch_id)
         fallback_result = self._fallback.analyze(batch)
-        self._store_safe().insert(
-            vector,
-            batch_text,
-            fallback_result.error_found,
-            embedder_model_name=self.config.embedding_model_name,
-            model_name=fallback_result.model_name
-        )
+        fallback_result.embedder_model_name = self.config.embedding_model_name
+        if fallback_result.is_valid_response: #solo guarda el embedding si la respuesta del modelo es valida
+            self._store_safe().insert(
+                vector,
+                batch_text,
+                fallback_result.error_found,
+                embedder_model_name=fallback_result.embedder_model_name,
+                model_name=fallback_result.model_name
+            )
 
-        return BatchAnalysisResult(
-            batch_id=batch.batch_id,
-            error_found=fallback_result.error_found,
-            model_name=fallback_result.model_name,
-            embedder_model_name=self.config.embedding_model_name,
-            token_usage=fallback_result.token_usage
-        )
+        return fallback_result
 
     ##Droping database ONLY FOR TESTING PURPOSES
     def _delete_collection(self) -> None:

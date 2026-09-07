@@ -33,19 +33,13 @@ class Pipeline:
         try:
             result = self.model.analyze(batch)
         except Exception as e:
-            logger.error("Error analyzing batch #%d: %s", batch.batch_id, e)
+            logger.exception("Error analyzing batch #%d: %s", batch.batch_id, e)
             result = BatchAnalysisResult(
                 batch_id=batch.batch_id,
                 error_found=True,
-                model_name=self.model.config.generative.model_name if hasattr(self.model, "config") else None,
-                embedder_model_name=self.model.config.embedder_model_name if hasattr(self.model, "config") else None,
+                model_name=getattr(self.model.config, "model_name", None),
+                token_usage=0,
             )
 
         elapsed = time.perf_counter() - start
-        logger.info(
-            "Batch #%d complete in %.3fs: error_found=%s",
-            batch.batch_id,
-            elapsed,
-            result.error_found,
-        )
         return result

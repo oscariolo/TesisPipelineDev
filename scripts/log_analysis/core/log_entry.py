@@ -25,6 +25,8 @@ class BatchAnalysisResult(BaseModel):
     model_name: Optional[str] = None
     embedder_model_name: Optional[str] = None
     token_usage: Optional[int] = None
+    is_valid_response: Optional[bool] = False
+    raw_response: Optional[str] = None
 
     @property
     def is_error(self) -> bool:
@@ -35,10 +37,16 @@ class BatchAnalysisResult(BaseModel):
         self.error_found = value
 
     def to_summary(self) -> dict[str, bool | int]:
-        return {
-            "batch_id": self.batch_id,
-            "error_found": self.error_found,
-            "model_name": self.model_name,
-            "embedder_model_name": self.embedder_model_name,
-            "token_usage": self.token_usage,
-        }
+        if self.is_valid_response:
+            return {
+                "batch_id": self.batch_id,
+                "error_found": self.error_found,
+                "model_name": self.model_name,
+                "embedder_model_name": self.embedder_model_name,
+                "token_usage": self.token_usage,
+            }
+        else:
+            return {
+                "batch_id": self.batch_id,
+                "raw_response": self.raw_response,
+            }
