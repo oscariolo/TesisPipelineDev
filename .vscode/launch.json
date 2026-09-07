@@ -2,6 +2,23 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Ollama (generative, masked)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "module": "main",
+      "args": [
+        "--mode", "generative",
+        "--backend", "ollama",
+        "--model-name", "smollm2:1.7b",
+        "--batch-size", "10",
+        "--mask-ips",
+        // "--mask-uuids",
+        // "--mask-numbers"
+      ]
+    },
+    {
       "name": "Ollama (generative)",
       "type": "debugpy",
       "request": "launch",

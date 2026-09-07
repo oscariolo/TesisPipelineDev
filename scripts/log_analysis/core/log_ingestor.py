@@ -1,5 +1,6 @@
 import logging
 import time
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Generator
@@ -22,9 +23,10 @@ class LogIngestor(ABC):
 
 
 class FileLogIngestor(LogIngestor):
-    def __init__(self, log_dir: str | Path, batch_size: int = 100):
+    def __init__(self, log_dir: str | Path, batch_size: int = 100, masker=None):
         super().__init__(batch_size)
         self.log_dir = Path(log_dir)
+        self.masker = masker
 
     def iter_batches(self) -> Generator[LogBatch, None, None]:
         file_paths = sorted(self.log_dir.glob("*.log"))
@@ -44,7 +46,7 @@ class FileLogIngestor(LogIngestor):
                         LogEntry(
                             index=global_idx,
                             source_file=file_path.name,
-                            raw_text=line,
+                            raw_text=self.masker.mask(line) if self.masker else line,
                         )
                     )
                     global_idx += 1
@@ -57,10 +59,11 @@ class FileLogIngestor(LogIngestor):
 
 
 class StreamLogIngestor(LogIngestor):
-    def __init__(self, url: str, batch_size: int = 100, poll_interval: float = 5.0):
+    def __init__(self, url: str, batch_size: int = 100, poll_interval: float = 5.0, masker=None):
         super().__init__(batch_size)
         self.url = url
         self.poll_interval = max(0.0, poll_interval)
+        self.masker = masker
 
     def iter_batches(self) -> Generator[LogBatch, None, None]:
         batch_id = 0
@@ -78,7 +81,7 @@ class StreamLogIngestor(LogIngestor):
                             LogEntry(
                                 index=global_idx,
                                 source_file=self.url,
-                                raw_text=line,
+                                raw_text=self.masker.mask(line) if self.masker else line,
                             )
                         )
                         global_idx += 1
@@ -147,3 +150,19 @@ class JsonLogIngestor(LogIngestor):
                 
         if entries:
             yield LogBatch(batch_id=batch_id, entries=entries)
+
+class LogMasker:
+    """Clase para ocultar variables en los logs a conveniencia."""
+    def __init__(self, mask_ips: bool = True, mask_uuids: bool = True, mask_numbers: bool = True):
+        self.mask_ips = mask_ips
+        self.mask_uuids = mask_uuids
+        self.mask_numbers = mask_numbers
+
+    def mask(self, text: str) -> str:
+        if self.mask_ips:
+            text = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '<IP>', text)
+        if self.mask_uuids:
+            text = re.sub(r'\b[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}\b', '<UUID>', text)
+        if self.mask_numbers:
+            text = re.sub(r'\b\d+\b', '<NUM>', text)
+        return text

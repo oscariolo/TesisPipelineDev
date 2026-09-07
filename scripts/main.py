@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from log_analysis.core.log_ingestor import FileLogIngestor, StreamLogIngestor, JsonLogIngestor
+from log_analysis.core.log_ingestor import FileLogIngestor, StreamLogIngestor, JsonLogIngestor, LogMasker
 from log_analysis.core.pipeline import Pipeline
 from log_analysis.models.embedding import EmbeddingConfig, EmbeddingModel
 from log_analysis.models.generative import GenerativeConfig, GenerativeModel
@@ -50,14 +50,21 @@ def main() -> None:
     parser.add_argument("--contextWindow", type=int, default=None, help="Maximum context window for the model (default: auto-detect)")
     parser.add_argument("--keepHistory", choices=["perPrompt", "always", "tokenLimit"], default="perPrompt", help="How to keep the conversation history")
     parser.add_argument("--tokenLimitPercentage", type=float, default=1.0, help="Percentage of context window to trigger history clearing in tokenLimit mode")
+    parser.add_argument("--mask-ips", action="store_true", help="Mask IP addresses in logs")
+    parser.add_argument("--mask-uuids", action="store_true", help="Mask UUIDs in logs")
+    parser.add_argument("--mask-numbers", action="store_true", help="Mask numbers in logs")
     args = parser.parse_args()
+
+    masker = None
+    if args.mask_ips or args.mask_uuids or args.mask_numbers:
+        masker = LogMasker(mask_ips=args.mask_ips, mask_uuids=args.mask_uuids, mask_numbers=args.mask_numbers)
 
     if args.json_file:
         ingestor = JsonLogIngestor(args.json_file, batch_size=args.batch_size)
     elif args.stream_url:
-        ingestor = StreamLogIngestor(args.stream_url, batch_size=args.batch_size, poll_interval=args.poll_interval)
+        ingestor = StreamLogIngestor(args.stream_url, batch_size=args.batch_size, poll_interval=args.poll_interval, masker=masker)
     else:
-        ingestor = FileLogIngestor(args.log_dir, batch_size=args.batch_size)
+        ingestor = FileLogIngestor(args.log_dir, batch_size=args.batch_size, masker=masker)
     writer = JsonWriter(args.output_dir)
 
     if args.mode == "generative":
