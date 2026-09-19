@@ -1,3 +1,8 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
+
 accelerate==1.14.0
 annotated-doc==0.0.4
 annotated-types==0.8.0

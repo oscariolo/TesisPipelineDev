@@ -45,6 +45,7 @@ def main() -> None:
     parser.add_argument("--log-dir", type=Path, default="./logs")
     parser.add_argument("--output-dir", type=Path, default="./analysis")
     parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--max-batches", type=int, default=None, help="Maximum number of batches to process")
     parser.add_argument("--stream-url", default=None, help="Read logs as a stream from this service URL instead of a file")
     parser.add_argument("--poll-interval", type=float, default=5.0, help="Seconds to wait between stream batch reads")
     parser.add_argument("--contextWindow", type=int, default=None, help="Maximum context window for the model (default: auto-detect)")
@@ -106,7 +107,8 @@ def main() -> None:
         )
         model = EmbeddingModel(config)
 
-    Pipeline(model, ingestor, writer).run()
+    # Pipeline(model, ingestor, writer).run()
+    Pipeline(model, ingestor, writer, max_batches=args.max_batches).run()
 
 
 if __name__ == "__main__":

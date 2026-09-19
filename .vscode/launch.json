@@ -11,7 +11,7 @@
       "args": [
         "--mode", "generative",
         "--backend", "ollama",
-        "--model-name", "smollm2:1.7b",
+        "--model-name", "hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M",
         "--batch-size", "10",
         "--mask-ips",
         // "--mask-uuids",

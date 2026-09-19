@@ -257,14 +257,25 @@ class ModelEvaluator:
             with path.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
             field_name = key or self.label_key
+            def get_nested(item: dict, k: str) -> Any:
+                for part in k.split('.'):
+                    if isinstance(item, dict):
+                        item = item.get(part)
+                    else:
+                        return None
+                return item
+
             if isinstance(payload, dict):
                 if field_name in payload:
                     return payload[field_name]
                 if isinstance(payload.get("results"), list):
-                    return [item.get(field_name) if isinstance(item, dict) else item for item in payload["results"]]
+                    # return [item.get(field_name) if isinstance(item, dict) else item for item in payload["results"]]
+                    return [get_nested(item, field_name) if isinstance(item, dict) else item for item in payload["results"]]
+                    
             if isinstance(payload, list):
                 if payload and all(isinstance(item, dict) for item in payload):
-                    return [item.get(field_name) for item in payload]
+                    # return [item.get(field_name) for item in payload]
+                    return [get_nested(item, field_name) for item in payload]
                 return payload
 
         values: list[Any] = []
@@ -314,6 +325,44 @@ class ModelEvaluator:
 
         return self.evaluate(y_true, y_pred, zero_division=zero_division, average=average)
 
+    def compare_batches(
+        self,
+        reference_file: str | Path,
+        comparison_file: str | Path,
+        batch_size: int,
+        reference_key: str | None = None,
+        comparison_key: str | None = None,
+        zero_division: float = 0.0,
+        average: str = "binary",
+    ) -> dict[str, Any]:
+        """Compare a per-log reference file against a per-batch comparison file."""
+        
+        # 1. Load all individual logs from the reference file
+        all_logs = self._coerce_file_labels(reference_file, key=reference_key)
+        
+        # 2. Group them into batches
+        reference_batches = []
+        for i in range(0, len(all_logs), batch_size):
+            batch_slice = all_logs[i:i+batch_size]
+            # If ANY log in the batch is an error, the whole batch is marked as an error
+            batch_has_error = any(self._as_binary(label) == 1 for label in batch_slice)
+            reference_batches.append(batch_has_error)
+            
+        # 3. Load the comparison file (already per-batch from the SLM)
+        y_pred = self._coerce_file_labels(comparison_file, key=comparison_key)
+        
+        # 4. Truncate both to match the minimum length
+        processed_count = len(y_pred)
+        if processed_count > len(reference_batches):
+            print(f"Warning: The model evaluated MORE batches ({processed_count}) than there are in the dataset ({len(reference_batches)}).")
+        
+        min_len = min(len(reference_batches), len(y_pred))
+        y_true = reference_batches[:min_len]
+        y_pred = y_pred[:min_len]
+        
+        print(f"Evaluando {min_len} batches (cada uno de {batch_size} logs)...")
+        return self.evaluate(y_true, y_pred, zero_division=zero_division, average=average)
+
 
 if __name__ == "__main__":
     import argparse
@@ -322,8 +371,11 @@ if __name__ == "__main__":
     parser.add_argument("reference_file", nargs="?", default="../analysis/log_analysis.jsonl")
     parser.add_argument("comparison_file", nargs="?", default=None)
     parser.add_argument("--label-key", default="error_found")
+    parser.add_argument("--ref-key", default=None, help="Label key for reference file (defaults to --label-key)")
+    parser.add_argument("--comp-key", default=None, help="Label key for comparison file (defaults to --label-key)")
     parser.add_argument("--positive-label", default="True")
     parser.add_argument("--negative-label", default="False")
+    parser.add_argument("--batch-size", type=int, default=None, help="If set, groups the reference file into batches of this size before comparing.")
     args = parser.parse_args()
 
     evaluator = ModelEvaluator(
@@ -331,10 +383,31 @@ if __name__ == "__main__":
         negative_label=args.negative_label.lower() in {"1", "true", "yes", "y"},
         label_key=args.label_key,
     )
-    metrics = evaluator.compare_files(
-        args.reference_file,
-        args.comparison_file,
-        reference_key=args.label_key,
-        comparison_key=args.label_key,
-    )
+    
+    # metrics = evaluator.compare_files(
+    #         args.reference_file,
+    #         args.comparison_file,
+    #         reference_key=args.label_key,
+    #         comparison_key=args.label_key,
+    #     )
+    
+    ref_key = args.ref_key or args.label_key
+    comp_key = args.comp_key or args.label_key
+
+    if args.batch_size:
+        metrics = evaluator.compare_batches(
+            args.reference_file,
+            args.comparison_file,
+            batch_size=args.batch_size,
+            reference_key=ref_key,
+            comparison_key=comp_key,
+        )
+    else:
+        metrics = evaluator.compare_files(
+            args.reference_file,
+            args.comparison_file,
+            reference_key=ref_key,
+            comparison_key=comp_key,
+        )
+        
     print(json.dumps(metrics, indent=2, default=str))

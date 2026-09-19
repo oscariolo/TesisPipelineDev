@@ -10,14 +10,20 @@ logger = logging.getLogger(__name__)
 
 
 class Pipeline:
-    def __init__(self, model: BaseModel, ingestor: LogIngestor, writer: JsonWriter):
+    # def __init__(self, model: BaseModel, ingestor: LogIngestor, writer: JsonWriter):
+    def __init__(self, model: BaseModel, ingestor: LogIngestor, writer: JsonWriter, max_batches: int | None = None):
         self.model = model
         self.ingestor = ingestor
         self.writer = writer
+        self.max_batches = max_batches
 
     def run(self) -> None:
         total_logs = 0
         for batch in self.ingestor.iter_batches():
+            if self.max_batches is not None and batch.batch_id >= self.max_batches:
+                logger.info("Reached max_batches (%d). Stopping pipeline.", self.max_batches)
+                break
+                
             result = self._analyze_batch(batch)
             self.writer.write(result)
             total_logs += len(batch.entries)
