@@ -16,8 +16,11 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
     precision_score,
     recall_score,
+    roc_auc_score,
+    roc_curve,
     zero_one_loss,
 )
+from sklearn.preprocessing import label_binarize
 
 
 class ModelEvaluator:
@@ -171,6 +174,55 @@ class ModelEvaluator:
 
     def hamming_loss(self, y_true: Sequence[Any], y_pred: Sequence[Any]) -> float:
         return hamming_loss(self._normalize_labels(y_true), self._normalize_labels(y_pred))
+
+    def roc_auc(
+        self,
+        y_true: Sequence[Any],
+        y_score: Sequence[float],
+        average: str = "macro",
+        multi_class: str = "ovr",
+    ) -> float:
+        """Compute ROC AUC. Requires continuous scores (not binary labels) for y_score."""
+        true_bin = self._normalize_labels(y_true)
+        score_arr = [float(s) for s in y_score]
+        if len(set(true_bin)) < 2:
+            return 0.0
+        try:
+            return float(roc_auc_score(true_bin, score_arr, average=average, multi_class=multi_class))
+        except ValueError:
+            return 0.0
+
+    def roc_curve_data(
+        self,
+        y_true: Sequence[Any],
+        y_score: Sequence[float],
+    ) -> dict[str, list[float]]:
+        """Return ROC curve points: {fpr, tpr, thresholds}."""
+        true_bin = self._normalize_labels(y_true)
+        score_arr = [float(s) for s in y_score]
+        if len(set(true_bin)) < 2:
+            return {"fpr": [0.0, 1.0], "tpr": [0.0, 1.0], "thresholds": [1.0, 0.0]}
+        fpr, tpr, thresholds = roc_curve(true_bin, score_arr)
+        return {
+            "fpr": fpr.tolist(),
+            "tpr": tpr.tolist(),
+            "thresholds": thresholds.tolist(),
+        }
+
+    def evaluate_with_roc(
+        self,
+        y_true: Sequence[Any],
+        y_score: Sequence[float],
+        labels: Sequence[Any] | None = None,
+        zero_division: float = 0.0,
+        average: str = "binary",
+    ) -> dict[str, Any]:
+        """Full evaluation including ROC AUC. y_score must be continuous confidence scores."""
+        base = self.evaluate(y_true=y_true, y_pred=[s >= 0.5 for s in y_score],
+                             labels=labels, zero_division=zero_division, average=average)
+        base["roc_auc"] = self.roc_auc(y_true, y_score, average=average)
+        base["roc_curve"] = self.roc_curve_data(y_true, y_score)
+        return base
 
     def evaluate(
         self,

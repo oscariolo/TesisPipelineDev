@@ -1,0 +1,8 @@
+Objetivo General
+Implementar un pipeline basado en modelos SLM capaz de identificar errores, notificar y recomendar al desarrollador en el contexto del DTIC en la Universidad de Cuenca, utilizando logs, trazas y métricas .
+Objetivos específicos:
+1. Construir un dataset estructurado, a partir de registros históricos de telemetría y logs de errores de los servidores del DTIC clasificados por tipos. 
+2. Implementar SLMs adaptados al contexto de la infraestructura universitaria para análisis de logs.
+3. Validación de los SLMs en su capacidad de identificación de errores con métricas de precisión (Accuracy,F1-Score, ROC)
+4. Implementar el pipeline que integra los modelos SLM con los diferentes servidores, capaz de analizar el flujo de logs en tiempo real, identificar anomalías y sugerir soluciones mostrándolo por una interfaz gráfica.
+5. Comprobar los resultados del modelo aplicado en el entorno del DTIC mediante simulaciones de errores dentro del pipeline.
