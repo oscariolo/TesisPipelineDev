@@ -2,23 +2,6 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Ollama (generative, masked)",
-      "type": "debugpy",
-      "request": "launch",
-      "cwd": "${workspaceFolder}/scripts",
-      "python": "${workspaceFolder}/scripts/.venv/bin/python",
-      "module": "main",
-      "args": [
-        "--mode", "generative",
-        "--backend", "ollama",
-        "--model-name", "hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M",
-        "--batch-size", "10",
-        "--mask-ips",
-        // "--mask-uuids",
-        // "--mask-numbers"
-      ]
-    },
-    {
       "name": "Ollama (generative)",
       "type": "debugpy",
       "request": "launch",
@@ -43,20 +26,6 @@
         "--backend", "huggingface",
         "--model-name", "HuggingFaceTB/SmolLM2-1.7B",
         "--hf-device", "cuda:0"
-      ]
-    },
-    {
-      "name": "Hugging Face (CPU)",
-      "type": "debugpy",
-      "request": "launch",
-      "cwd": "${workspaceFolder}/scripts",
-      "python": "${workspaceFolder}/scripts/.venv/bin/python",
-      "module": "main",
-      "args": [
-        "--mode", "generative",
-        "--backend", "huggingface",
-        "--model-name", "microsoft/Phi-3-mini-4k-instruct",
-        "--hf-device", "cpu"
       ]
     },
     {
@@ -92,7 +61,7 @@
         "--hf-device", "cuda:0",
         "--log-dir", "./logs",
         "--output-dir", "./analysis",
-        "--batch-size", "10"
+        "--batch-size", "100"
       ]
     },
     {
@@ -112,26 +81,33 @@
         "--embedding-threshold", "0.8",
         "--log-dir", "./logs",
         "--output-dir", "./analysis",
-        "--batch-size", "10"
+        "--batch-size", "100"
       ]
     },
     {
-      "name": "Custom args",
+      "name": "Builder log dataset",
       "type": "debugpy",
       "request": "launch",
       "cwd": "${workspaceFolder}/scripts",
       "python": "${workspaceFolder}/scripts/.venv/bin/python",
-      "module": "main",
+      "program": "${workspaceFolder}/scripts/log_analysis/dataset/builder.py",
       "args": [
-        "--mode", "generative",
-        "--backend", "ollama",
-        "--model-name", "qwen3.6:latest",
-        "--ollama-host", "localhost",
-        "--ollama-port", "11434",
-        "--log-dir", "./logs",
-        "--output-dir", "./analysis"
+        "./logs",
+        "./dataset/log_dataset.jsonl"
       ]
-    }
+    },
+      {
+      "name": "Evaluation",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "program": "${workspaceFolder}/scripts/evaluation/model_evaluation_viz.py",
+      "args": [
+        "--batch-size", "100"
+      ]
+    },
+    
   ]
 }
 

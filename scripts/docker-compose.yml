@@ -31,49 +31,49 @@ services:
   #     retries: 5
 
   # --- AMD GPU CONFIG ---
-  # ollama:
-  # image: ollama/ollama:rocm
-  # ports:
-  # - "${OLLAMA_HOST_PORT:-11434}:11434"
-  # volumes:
-  # - ollama-models:/root/.ollama
-  # devices:
-  # - /dev/kfd
-  # - /dev/dri
-  # post_start:
-  # - command: ollama pull hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
-  # - command: ollama run hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
-  # healthcheck:
-  # test: ["CMD", "ollama", "list"]
-  # interval: 10s
-  # retries: 5
-
-  # --- NVIDIA GPU CONFIG ---
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:rocm
     ports:
-      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    - "${OLLAMA_HOST_PORT:-11434}:11434"
     volumes:
-      - ollama-models:/root/.ollama
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    # NOTA: post_start no es oficial en docker-compose v3. 
-    # Si falla al iniciar, mantenlas comentadas.
+    - ollama-models:/root/.ollama
+    devices:
+    - /dev/kfd
+    - /dev/dri
     post_start:
-     - command: ollama pull hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
-     - command: ollama run hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
+    - command: ollama pull hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
+    - command: ollama run hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
       retries: 5
+
+  # # --- NVIDIA GPU CONFIG ---
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "${OLLAMA_HOST_PORT:-11434}:11434"
+  #   volumes:
+  #     - ollama-models:/root/.ollama
+  #   dns:
+  #     - 8.8.8.8
+  #     - 1.1.1.1
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   # NOTA: post_start no es oficial en docker-compose v3. 
+  #   # Si falla al iniciar, mantenlas comentadas.
+  #   post_start:
+  #    - command: ollama pull hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
+  #    - command: ollama run hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M
+  #   healthcheck:
+  #     test: ["CMD", "ollama", "list"]
+  #     interval: 10s
+  #     retries: 5
   
   grafana:
     image: grafana/grafana-enterprise

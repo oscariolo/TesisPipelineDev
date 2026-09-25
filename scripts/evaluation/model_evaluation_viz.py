@@ -16,6 +16,7 @@ import io
 import os
 import pathlib
 import warnings
+import sys
 from typing import Any
 
 import matplotlib
@@ -23,7 +24,9 @@ matplotlib.use("Agg")  # headless — no display required
 import matplotlib.pyplot as plt
 import numpy as np
 
-from evaluation.modelEvaluation import ModelEvaluator
+# Import modelEvaluation from the same directory
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from modelEvaluation import ModelEvaluator
 
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
@@ -61,7 +64,7 @@ def plot_roc_curve(
     tpr: list[float],
     auc: float,
     output_path: str | pathlib.Path,
-) -> None:
+) -> pathlib.Path:
     """Save a single ROC curve plot."""
     fig, ax = plt.subplots(figsize=(6.5, 5))
     ax.plot(fpr, tpr, color="#2563eb", linewidth=2, label=f"ROC curve (AUC = {auc:.4f})")
@@ -71,14 +74,14 @@ def plot_roc_curve(
     ax.set_ylim([0.0, 1.05])
     _style_axes(ax, "Receiver Operating Characteristic (ROC) Curve", "False Positive Rate", "True Positive Rate")
     ax.legend(loc="lower right", fontsize=11, frameon=True, facecolor="white", edgecolor="#e2e8f0")
-    _save(fig, pathlib.Path(output_path))
+    return _save(fig, pathlib.Path(output_path))
 
 
 def plot_roc_from_metrics(
     metrics: dict[str, Any],
     output_path: str | pathlib.Path,
 ) -> pathlib.Path | None:
-    """Extract ROC data from a metrics dict (with 'roc_curve' and 'roc_auc' keys) and plot."""
+    """Extract ROC data from a metrics dict and plot."""
     roc = metrics.get("roc_curve", {})
     auc = metrics.get("roc_auc", 0.0)
     if not roc or "fpr" not in roc:
@@ -115,7 +118,7 @@ def plot_confusion_matrix(
             ax.text(j, i, f"{arr[i, j]:d}", ha="center", va="center",
                     color="white" if arr[i, j] > arr.max() * 0.55 else "#1e293b",
                     fontsize=14, fontweight="bold")
-    _save(fig, pathlib.Path(output_path))
+    return _save(fig, pathlib.Path(output_path))
 
 
 def plot_confusion_from_metrics(
@@ -148,7 +151,6 @@ def plot_metrics_bar(
         v = metrics.get(k)
         if v is not None:
             values.append(float(v))
-            # pretty label
             label = k.replace("_", " ").title()
             labels.append(label)
 
@@ -185,7 +187,7 @@ def plot_model_comparison(
     n_metrics = len(metric_keys)
     if n_models == 0 or n_metrics == 0:
         print("[warn] Empty model_results — skipping comparison plot.")
-        return
+        return None
 
     x = np.arange(n_metrics)
     width = 0.8 / n_models
@@ -232,27 +234,35 @@ def generate_report(
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point — evaluate + plot in one command
+# CLI entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import argparse
     import json
-    import sys
+    import pathlib as _pl
 
-    from evaluation.modelEvaluation import ModelEvaluator
+    # Resolve defaults relative to the scripts/ directory (one level up from this script)
+    _scripts_dir = _pl.Path(__file__).resolve().parent.parent
+    _dataset_dir = _scripts_dir / "dataset"
+    _analysis_dir = _scripts_dir / "analysis"
 
     parser = argparse.ArgumentParser(
         description="Evaluate an SLM log-analysis output and generate diagram reports (PNG)."
     )
-    parser.add_argument("reference_file", nargs="?", default="../analysis/log_analysis.jsonl")
-    parser.add_argument("comparison_file", nargs="?", default=None)
-    parser.add_argument("--output-dir", default="../analysis/eval_plots",
+    parser.add_argument("reference_file", nargs="?", default=str(_dataset_dir / "dataset_slm_procesado_web.json"),
+                        help="Ground-truth dataset from parse_and_label.py (default: dataset/dataset_slm_procesado_web.json)")
+    parser.add_argument("comparison_file", nargs="?", default=str(_analysis_dir / "log_analysis.jsonl"),
+                        help="Pipeline SLM output (default: analysis/log_analysis.jsonl)")
+    parser.add_argument("--output-dir", default=str(_analysis_dir / "eval_plots"),
                         help="Directory to save PNG diagrams")
     parser.add_argument("--label-key", default="error_found")
-    parser.add_argument("--ref-key", default=None)
-    parser.add_argument("--comp-key", default=None)
-    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--ref-key", default="ground_truth_label.is_error",
+                        help="Label key for reference file (default: ground_truth_label.is_error for parse_and_label output)")
+    parser.add_argument("--comp-key", default="error_found",
+                        help="Label key for comparison file (default: error_found for pipeline output)")
+    parser.add_argument("--batch-size", type=int, default=100,
+                        help="Batch size for grouping ground-truth logs to match pipeline output (default: 100)")
     parser.add_argument("--roc", action="store_true",
                         help="Also require ROC data: reads a second comparison file with 'confidence' scores")
     parser.add_argument("--confidence-file", default=None,
@@ -270,7 +280,7 @@ if __name__ == "__main__":
     ref_key = args.ref_key or args.label_key
     comp_key = args.comp_key or args.label_key
 
-    # 1. Standard metrics
+    # Standard metrics
     if args.batch_size:
         metrics = evaluator.compare_batches(
             args.reference_file, args.comparison_file,
@@ -282,7 +292,7 @@ if __name__ == "__main__":
             reference_key=ref_key, comparison_key=comp_key,
         )
 
-    # 2. ROC data if requested
+    # ROC data if requested
     if args.roc or args.confidence_file:
         conf_path = pathlib.Path(args.confidence_file or args.comparison_file or args.reference_file)
         y_conf = []
@@ -303,13 +313,12 @@ if __name__ == "__main__":
             elif isinstance(data, dict) and isinstance(data.get("results"), list):
                 y_conf = [float(r.get("confidence", r.get("error_found", 0))) for r in data["results"] if isinstance(r, dict)]
 
-        if y_conf and "y_true" in dir(evaluator):
-            # rebuild y_true from the reference
+        if y_conf:
             ref_path = pathlib.Path(args.reference_file)
             y_true = evaluator._coerce_file_labels(ref_path, key=ref_key)
             metrics["roc_auc"] = evaluator.roc_auc(y_true, y_conf)
             metrics["roc_curve"] = evaluator.roc_curve_data(y_true, y_conf)
 
-    # 3. Generate all diagrams
+    # Generate all diagrams
     paths = generate_report(metrics, args.output_dir, prefix=args.prefix)
     print(f"\nDone. {len(paths)} diagram(s) saved to {args.output_dir}/")

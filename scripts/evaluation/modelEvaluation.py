@@ -420,7 +420,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Evaluate model predictions against a reference log-analysis output.")
-    parser.add_argument("reference_file", nargs="?", default="../analysis/log_analysis.jsonl")
+    parser.add_argument("reference_file", nargs="?", default="dataset/analysis/log_analysis.jsonl")
     parser.add_argument("comparison_file", nargs="?", default=None)
     parser.add_argument("--label-key", default="error_found")
     parser.add_argument("--ref-key", default=None, help="Label key for reference file (defaults to --label-key)")

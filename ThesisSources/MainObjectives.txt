@@ -6,3 +6,6 @@ Objetivos específicos:
 3. Validación de los SLMs en su capacidad de identificación de errores con métricas de precisión (Accuracy,F1-Score, ROC)
 4. Implementar el pipeline que integra los modelos SLM con los diferentes servidores, capaz de analizar el flujo de logs en tiempo real, identificar anomalías y sugerir soluciones mostrándolo por una interfaz gráfica.
 5. Comprobar los resultados del modelo aplicado en el entorno del DTIC mediante simulaciones de errores dentro del pipeline.
+The current project is a Thesis for analyzing different small language models on anlayzing and detecting anomalies in logs, the pipeline accepts many different parameters to test in diffe
+rent scenarios and configurations the behaviour of the slms on this task. You will help me build this project, the project must accomplish the general and specific objectives described in t
+he MainObjectives.txt file. 

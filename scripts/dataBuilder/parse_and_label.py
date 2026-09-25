@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 
 def re_sub_variables(text):
     """
@@ -85,17 +86,33 @@ def parse_log_line(log_line, service_name="university-service"):
 def process_log_dataset(input_file_path, output_json_path):
     dataset_parsed = []
     
-    with open(input_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+    # Resolve relative paths against the repo root (4 levels up from this file)
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    
+    input_path = Path(input_file_path)
+    if not input_path.is_absolute():
+        input_path = repo_root / input_file_path
+    
+    with open(input_path, 'r', encoding='utf-8', errors='ignore') as f:
         for line in f:
             if line.strip(): # Ignorar lineas vacias
                 parsed_item = parse_log_line(line)
                 dataset_parsed.append(parsed_item)
                 
-    with open(output_json_path, 'w', encoding='utf-8') as f_out:
+    output_path = Path(output_json_path)
+    if not output_path.is_absolute():
+        output_path = repo_root / output_json_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(output_path, 'w', encoding='utf-8') as f_out:
         json.dump(dataset_parsed, f_out, indent=2, ensure_ascii=False)
         
     print(f"✅ Procesamiento completado. Total de logs procesados: {len(dataset_parsed)}")
-    print(f"📁 Dataset exportado en: {output_json_path}")
+    print(f"📁 Dataset exportado en: {output_path}")
 
 # Ejemplo de uso:
-process_log_dataset("logs/SSH.log", "dataset_slm_procesado(1).json")
+if __name__ == "__main__":
+    import sys
+    input_log = sys.argv[1] if len(sys.argv) > 1 else "Tesis/scripts/logs/webServer.log"
+    output_json = sys.argv[2] if len(sys.argv) > 2 else "Tesis/scripts/dataset/dataset_slm_procesado_web.json"
+    process_log_dataset(input_log, output_json)
