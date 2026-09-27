@@ -26,7 +26,8 @@ models = [
 
 load_dotenv()
 # huggingFaceToken = os.getenv("HF_TOKEN", None)
-huggingFaceToken = os.getenv("HF_TOKEN", "")
+from huggingface_hub import login
+login(token=os.getenv("HF_TOKEN", ""))
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Log Analysis Pipeline")
@@ -76,7 +77,6 @@ def main() -> None:
             ollama_port=args.ollama_port,
             hf_device=args.hf_device,
             thinking=False,  # Set to True if you want to enable thinking mode
-            token=huggingFaceToken,
             tokenizer_name=args.tokenizer_name,
             gguf_file=args.gguf_file,
             keepHistory=args.keepHistory,
@@ -92,7 +92,6 @@ def main() -> None:
                 ollama_port=args.ollama_port,
                 hf_device=args.hf_device,
                 thinking=False,
-                token=huggingFaceToken,
                 tokenizer_name=args.tokenizer_name,
                 gguf_file=args.gguf_file,
                 keepHistory=args.keepHistory,
@@ -102,7 +101,6 @@ def main() -> None:
             db_path=args.embedding_db,
             similarity_threshold=args.embedding_threshold,
             hf_device=args.hf_device,
-            token=huggingFaceToken,
             clearCollectionAtStartup=True,  # Set to True if you want to clear the Milvus collection on startup (testing only)
         )
         model = EmbeddingModel(config)
