@@ -74,14 +74,16 @@
       "args": [
         "--mode", "embedding",
         "--backend", "huggingface",
-        "--model-name", "HuggingFaceTB/SmolLM2-1.7B",
+        "--model-name", "mradermacher/llama-3.2-1B-log-analyzer-GGUF",
+        "--tokenizer-name", "meta-llama/Llama-3.2-1B", //gguf file should contain the tokenizer, but we can specify it explicitly if needed
+        "--gguf-file", "llama-3.2-1B-log-analyzer.f16.gguf",
         "--hf-device", "cuda:0",
         "--embedding-model-name", "sentence-transformers/all-MiniLM-L6-v2",
         "--embedding-db", "./embeddings/log_embeddings.db",
         "--embedding-threshold", "0.8",
         "--log-dir", "./logs",
         "--output-dir", "./analysis",
-        "--batch-size", "100"
+        "--batch-size", "10"
       ]
     },
     {

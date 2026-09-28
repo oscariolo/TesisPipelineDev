@@ -3,3 +3,5 @@ DataSet/dataset_slm_procesado(1).json
 
 .venv/
 scripts/.venv/
+
+scripts/__pycache__/

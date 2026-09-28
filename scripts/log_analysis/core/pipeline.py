@@ -1,6 +1,11 @@
 import logging
 import time
 
+try:
+    import torch
+except ImportError:
+    torch = None
+
 from log_analysis.core.log_entry import BatchAnalysisResult, LogBatch
 from log_analysis.core.log_ingestor import LogIngestor
 from log_analysis.models.base import BaseModel
@@ -39,7 +44,16 @@ class Pipeline:
         try:
             result = self.model.analyze(batch)
         except Exception as e:
-            logger.exception("Error analyzing batch #%d: %s", batch.batch_id, e)
+            if torch is not None and isinstance(e, torch.OutOfMemoryError):
+                logger.exception(
+                    "CUDA OOM analyzing batch #%d (%d entries); "
+                    "the batch may exceed GPU memory — try reducing --batch-size",
+                    batch.batch_id, len(batch.entries),
+                )
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            else:
+                logger.exception("Error analyzing batch #%d: %s", batch.batch_id, e)
             result = BatchAnalysisResult(
                 batch_id=batch.batch_id,
                 error_found=True,

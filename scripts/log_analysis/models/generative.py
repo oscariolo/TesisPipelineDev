@@ -11,6 +11,8 @@ from log_analysis.core.log_entry import LogBatch, BatchAnalysisResult
 from log_analysis.models.base import BaseModel
 import ollama
 
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+
 logger = logging.getLogger(__name__)
 
 PROMPT_TEMPLATE = """Determine if there is an error in this group of logs.Respond ONLY with valid JSON in this exact format, do not include any extra text or explanations:
@@ -31,6 +33,16 @@ SYSTEM_PROMPT = {
     "recommended_action": "what action to take or null"
 }""",
 }
+
+def getMaxVramAvailable() -> int:
+    """Returns the maximum VRAM available on the current device in bytes."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_properties(0).total_memory
+    except ImportError:
+        logger.warning("PyTorch not installed, cannot determine VRAM.")
+    return 0
 
 
 class GenerativeConfig(PydanticBaseModel):
@@ -75,31 +87,37 @@ class GenerativeModel(BaseModel):
             maxWindow = details.get("modelinfo", {}).get("llama.context_length", 4096)
             return maxWindow
         if self.config.backend == "huggingface":
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+            if(self.config.gguf_file is not None): #takes as if the model is gguf
+                model_id = self.config.model_name
+                gguf_file = self.config.gguf_file
+            else:
+                model_id = self.config.model_name
+                gguf_file = None
 
-            tokenizer_name = self.config.tokenizer_name or self.config.model_name
-            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-            model = AutoModelForCausalLM.from_pretrained(self.config.model_name)
-            max_length = tokenizer.model_max_length
+            if self._tokenizer is None:
+                self._tokenizer = AutoTokenizer.from_pretrained(model_id, gguf_file=gguf_file)
+            max_length = self._tokenizer.model_max_length
+        #check wether device can handle the max, if not, get the max that can be handled by the device
             return max_length
         return 4096
 
     def _load_hf(self):
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
         logger.info("Loading HF model %s on %s", self.config.model_name, self.config.hf_device)
-        kwargs = {}
-        if self.config.gguf_file:
-            kwargs["gguf_file"] = self.config.gguf_file
-        tokenizer_name = self.config.tokenizer_name or self.config.model_name
-        self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, **kwargs)
+        #gguf file should take priority when determining tokenizer
+        if self.config.gguf_file is not None:
+            tokenizer_name = self.config.model_name
+        else:
+            tokenizer_name = self.config.tokenizer_name or self.config.model_name
+
+        if self._tokenizer is None:
+            self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, gguf_file=self.config.gguf_file)
         self._model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
-            device_map=self.config.hf_device,
-            **kwargs
+            device_map="auto",
+            gguf_file=self.config.gguf_file
         )
 
-    def _call_hf(self) -> tuple[str, int]:
+    def _call_hf(self, batch_size: int = 0) -> tuple[str, int]:
         if getattr(self._tokenizer, "chat_template", None):
             inputs = self._tokenizer.apply_chat_template(
                 self._messages,
@@ -120,7 +138,9 @@ class GenerativeModel(BaseModel):
         inputs = dict(inputs)
         device = next(self._model.parameters()).device
         inputs = {k: v.to(device) for k, v in inputs.items()}
-        outputs = self._model.generate(**inputs, max_new_tokens=200)
+        # Safety: cap max_new_tokens to avoid unbounded generation OOM
+        gen_kwargs = {"max_new_tokens": 200}
+        outputs = self._model.generate(**inputs, **gen_kwargs)
         prompt_length = inputs["input_ids"].shape[-1]
         generated_length = outputs[0].shape[-1] - prompt_length
         text = self._tokenizer.decode(
