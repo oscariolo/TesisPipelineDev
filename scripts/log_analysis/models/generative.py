@@ -95,7 +95,7 @@ class GenerativeModel(BaseModel):
                 gguf_file = None
 
             if self._tokenizer is None:
-                self._tokenizer = AutoTokenizer.from_pretrained(model_id, gguf_file=gguf_file)
+                self._tokenizer = AutoTokenizer.from_pretrained(model_id, gguf_file=gguf_file, device_map="auto")
             max_length = self._tokenizer.model_max_length
         #check wether device can handle the max, if not, get the max that can be handled by the device
             return max_length
@@ -110,11 +110,12 @@ class GenerativeModel(BaseModel):
             tokenizer_name = self.config.tokenizer_name or self.config.model_name
 
         if self._tokenizer is None:
-            self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, gguf_file=self.config.gguf_file)
+            self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, gguf_file=self.config.gguf_file, device_map="auto")
         self._model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
             device_map="auto",
-            gguf_file=self.config.gguf_file
+            gguf_file=self.config.gguf_file,
+            offload_folder="./offloading",
         )
 
     def _call_hf(self, batch_size: int = 0) -> tuple[str, int]:
