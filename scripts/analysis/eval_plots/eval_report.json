@@ -3,33 +3,74 @@
   "embedder_model_name": "sentence-transformers/all-MiniLM-L6-v2",
   "label_key": "error_found",
   "positive_class": "error_found (label=1)",
-  "averaging": "binary (positive class only)",
-  "evaluated_at": "2026-10-06T13:39:40",
-  "accuracy": 0.14785214785214784,
-  "balanced_accuracy": 0.48128108433076455,
+  "averaging": "positive class only (binary); per-class + macro/weighted for 3 classes",
+  "none_as": "unclassified",
+  "unclassified_count": 880,
+  "evaluated_at": "2026-10-06T14:05:53",
+  "accuracy": 0.14285714285714285,
+  "balanced_accuracy": 0.47868503033284143,
   "precision": 0.03640500568828214,
   "recall": 0.8421052631578947,
   "f1_score": 0.0697928026172301,
   "confusion_matrix": [
     [
-      116,
-      847
+      111,
+      847,
+      5
     ],
     [
       6,
-      32
+      32,
+      0
+    ],
+    [
+      0,
+      0,
+      0
     ]
   ],
-  "matthews_corrcoef": -0.021869621786643145,
-  "zero_one_loss": 0.8521478521478522,
-  "hamming_loss": 0.8521478521478522,
+  "classes": [
+    0,
+    1,
+    2
+  ],
+  "matthews_corrcoef": -0.023322600716873462,
+  "zero_one_loss": 0.8571428571428572,
+  "hamming_loss": 0.8571428571428571,
   "true_negative": 116,
   "false_positive": 847,
   "false_negative": 6,
   "true_positive": 32,
   "support": {
     "negative": 963,
-    "positive": 38
+    "positive": 38,
+    "unclassified": 0
   },
-  "total_samples": 1001
+  "total_samples": 1001,
+  "per_class": {
+    "negative": {
+      "precision": 0.9487179487179487,
+      "recall": 0.11526479750778816,
+      "f1_score": 0.20555555555555555,
+      "support": 963
+    },
+    "positive": {
+      "precision": 0.03640500568828214,
+      "recall": 0.8421052631578947,
+      "f1_score": 0.0697928026172301,
+      "support": 38
+    },
+    "unclassified": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "support": 0
+    }
+  },
+  "precision_macro": 0.32837431813541024,
+  "recall_macro": 0.31912335355522764,
+  "f1_score_macro": 0.09178278605759521,
+  "precision_weighted": 0.9140846901413978,
+  "recall_weighted": 0.14285714285714285,
+  "f1_score_weighted": 0.20040172477468005
 }
