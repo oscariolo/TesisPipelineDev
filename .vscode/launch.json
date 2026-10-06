@@ -106,9 +106,43 @@
       "python": "${workspaceFolder}/scripts/.venv/bin/python",
       "program": "${workspaceFolder}/scripts/evaluation/model_evaluation_viz.py",
       "args": [
-        "--batch-size", "100"
+        "--batch-size", "10"
       ]
     },
+    {
+      "name": "Analyze parsed dataset",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "program": "${workspaceFolder}/scripts/dataBuilder/analyze_parsed_dataset.py",
+      "args": [
+        "${workspaceFolder}/scripts/dataset/dataset_slm_procesado_web.json",
+        "--output", "${workspaceFolder}/scripts/analysis/dataset_stats.json"
+      ]
+    },
+    {
+      "name": "Fine-tune training.py",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "program": "${workspaceFolder}/scripts/training/training.py",
+      "args": [
+        "--model_name", "mradermacher/llama-3.2-1B-log-analyzer-GGUF",
+        "--gguf-file", "llama-3.2-1B-log-analyzer.f16.gguf",
+        "--train_file", "${workspaceFolder}/scripts/dataset/dataset_slm_procesado_web.json",
+        "--output_dir", "${workspaceFolder}/scripts/fine_tuned_model",
+        "--label_column", "ground_truth_label.is_error",
+        "--num_train_epochs", "3",
+        "--test_size", "0.2",
+        "--max_length", "512",
+        "--lora_r", "8",
+        "--lora_alpha", "32",
+        "--lora_dropout", "0.1",
+        "--lora_bias", "none"
+      ]
+    }
     
   ]
 }

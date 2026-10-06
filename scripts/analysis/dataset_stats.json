@@ -1,0 +1,46 @@
+{
+  "total_records": 10001,
+  "error_records": 39,
+  "normal_records": 9962,
+  "error_rate": 0.0039,
+  "error_rate_percentage": 0.39,
+  "log_level_distribution": {
+    "INFO": 9976,
+    "ERROR": 25
+  },
+  "error_category_distribution": {
+    "NORMAL": {
+      "count": 9962,
+      "percentage": 99.61,
+      "unique_templates": 8256
+    },
+    "HTTP_SERVICE_FAILURE": {
+      "count": 26,
+      "percentage": 0.26,
+      "unique_templates": 25
+    },
+    "DATABASE_ERROR": {
+      "count": 10,
+      "percentage": 0.1,
+      "unique_templates": 10
+    },
+    "AUTHENTICATION_ERROR": {
+      "count": 3,
+      "percentage": 0.03,
+      "unique_templates": 3
+    }
+  },
+  "severity_distribution": {
+    "NONE": 9962,
+    "HIGH": 39
+  },
+  "service_distribution": {
+    "university-service": 10001
+  },
+  "unique_templates": 8290,
+  "template_ratio": 0.8289,
+  "avg_raw_length": 356.3,
+  "avg_template_length": 418.6,
+  "max_raw_length": 3238,
+  "max_template_length": 4799
+}
