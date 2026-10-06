@@ -269,6 +269,12 @@ if __name__ == "__main__":
                         help="JSONL file with per-batch 'confidence' float field for ROC plot")
     parser.add_argument("--prefix", default="eval",
                         help="Filename prefix for saved diagrams")
+    parser.add_argument("--report-file", default=None,
+                        help="Path to write the JSON evaluation report (default: <output-dir>/<prefix>_report.json)")
+    parser.add_argument("--model-name", default=None,
+                        help="Override the evaluated model name (default: read from the pipeline output)")
+    parser.add_argument("--embedding-model-name", default=None,
+                        help="Override the embedding model name (default: read from the pipeline output)")
     args = parser.parse_args()
 
     evaluator = ModelEvaluator(
@@ -322,3 +328,13 @@ if __name__ == "__main__":
     # Generate all diagrams
     paths = generate_report(metrics, args.output_dir, prefix=args.prefix)
     print(f"\nDone. {len(paths)} diagram(s) saved to {args.output_dir}/")
+
+    # JSON report with model + embedding metadata and positive-class (error_found) metrics
+    metadata = evaluator.read_model_metadata(args.comparison_file) if args.comparison_file else {}
+    report_path = args.report_file or str(pathlib.Path(args.output_dir) / f"{args.prefix}_report.json")
+    evaluator.save_report(
+        metrics,
+        report_path,
+        model_name=args.model_name or metadata.get("model_name"),
+        embedder_model_name=args.embedding_model_name or metadata.get("embedder_model_name"),
+    )

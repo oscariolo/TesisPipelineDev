@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -21,6 +22,23 @@ from sklearn.metrics import (
     zero_one_loss,
 )
 from sklearn.preprocessing import label_binarize
+
+
+def _to_jsonable(value: Any) -> Any:
+    """Recursively convert numpy scalars/arrays into plain JSON-serializable types."""
+    if isinstance(value, dict):
+        return {key: _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, bool):
+        return value
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except (AttributeError, ValueError):
+            return value
+    return value
 
 
 class ModelEvaluator:
@@ -268,7 +286,6 @@ class ModelEvaluator:
             "recall": recall,
             "f1_score": f1,
             "confusion_matrix": matrix,
-            "classification_report": self.classification_report(y_true, y_pred, labels=[0, 1], zero_division=zero_division),
             "matthews_corrcoef": matthews_corrcoef(true_labels, pred_labels),
             "zero_one_loss": zero_one_loss(true_labels, pred_labels),
             "hamming_loss": hamming_loss(true_labels, pred_labels),
@@ -279,6 +296,78 @@ class ModelEvaluator:
             "support": {"negative": tn + fp, "positive": fn + tp},
             "total_samples": len(true_labels),
         }
+
+    def read_model_metadata(self, file_path: str | Path) -> dict[str, Any]:
+        """Return {model_name, embedder_model_name} from the first labelled record.
+
+        Pipeline JSONL/JSON outputs carry ``model_name`` and ``embedder_model_name`` per
+        batch; the first record that has a ``model_name`` is used. Missing fields stay None.
+        """
+        path = Path(file_path)
+        record: dict[str, Any] | None = None
+        if path.suffix.lower() == ".jsonl":
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    candidate = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidate, dict) and candidate.get("model_name") is not None:
+                    record = candidate
+                    break
+        elif path.suffix.lower() == ".json":
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if isinstance(payload, list):
+                candidates = payload
+            elif isinstance(payload, dict) and isinstance(payload.get("results"), list):
+                candidates = payload["results"]
+            else:
+                candidates = []
+            for candidate in candidates:
+                if isinstance(candidate, dict) and candidate.get("model_name") is not None:
+                    record = candidate
+                    break
+        if not isinstance(record, dict):
+            return {"model_name": None, "embedder_model_name": None}
+        return {
+            "model_name": record.get("model_name"),
+            "embedder_model_name": record.get("embedder_model_name"),
+        }
+
+    def build_report(
+        self,
+        metrics: dict[str, Any],
+        model_name: str | None = None,
+        embedder_model_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Attach model metadata and positive-class framing to an evaluation result."""
+        report: dict[str, Any] = {
+            "model_name": model_name,
+            "embedder_model_name": embedder_model_name,
+            "label_key": self.label_key,
+            "positive_class": "error_found (label=1)",
+            "averaging": "binary (positive class only)",
+            "evaluated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        report.update(_to_jsonable(metrics))
+        return report
+
+    def save_report(
+        self,
+        metrics: dict[str, Any],
+        output_path: str | Path,
+        model_name: str | None = None,
+        embedder_model_name: str | None = None,
+    ) -> Path:
+        """Write the evaluation result (model metadata + metrics) as a JSON file."""
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        report = self.build_report(metrics, model_name=model_name, embedder_model_name=embedder_model_name)
+        out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"[saved] {out}")
+        return out
 
     def _read_jsonl_records(self, file_path: str | Path) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
@@ -428,6 +517,9 @@ if __name__ == "__main__":
     parser.add_argument("--positive-label", default="True")
     parser.add_argument("--negative-label", default="False")
     parser.add_argument("--batch-size", type=int, default=None, help="If set, groups the reference file into batches of this size before comparing.")
+    parser.add_argument("--report-file", default="analysis/evaluation_report.json", help="Path to write the JSON evaluation report.")
+    parser.add_argument("--model-name", default=None, help="Override the evaluated model name (default: read from the comparison file).")
+    parser.add_argument("--embedding-model-name", default=None, help="Override the embedding model name (default: read from the comparison file).")
     args = parser.parse_args()
 
     evaluator = ModelEvaluator(
@@ -461,5 +553,14 @@ if __name__ == "__main__":
             reference_key=ref_key,
             comparison_key=comp_key,
         )
-        
+
+    metadata_file = args.comparison_file or args.reference_file
+    metadata = evaluator.read_model_metadata(metadata_file) if metadata_file else {}
+    evaluator.save_report(
+        metrics,
+        args.report_file,
+        model_name=args.model_name or metadata.get("model_name"),
+        embedder_model_name=args.embedding_model_name or metadata.get("embedder_model_name"),
+    )
+
     print(json.dumps(metrics, indent=2, default=str))

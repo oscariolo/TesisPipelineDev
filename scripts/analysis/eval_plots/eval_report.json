@@ -1,0 +1,35 @@
+{
+  "model_name": "mradermacher/llama-3.2-1B-log-analyzer-GGUF",
+  "embedder_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+  "label_key": "error_found",
+  "positive_class": "error_found (label=1)",
+  "averaging": "binary (positive class only)",
+  "evaluated_at": "2026-10-06T13:39:40",
+  "accuracy": 0.14785214785214784,
+  "balanced_accuracy": 0.48128108433076455,
+  "precision": 0.03640500568828214,
+  "recall": 0.8421052631578947,
+  "f1_score": 0.0697928026172301,
+  "confusion_matrix": [
+    [
+      116,
+      847
+    ],
+    [
+      6,
+      32
+    ]
+  ],
+  "matthews_corrcoef": -0.021869621786643145,
+  "zero_one_loss": 0.8521478521478522,
+  "hamming_loss": 0.8521478521478522,
+  "true_negative": 116,
+  "false_positive": 847,
+  "false_negative": 6,
+  "true_positive": 32,
+  "support": {
+    "negative": 963,
+    "positive": 38
+  },
+  "total_samples": 1001
+}
