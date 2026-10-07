@@ -1,5 +1,7 @@
 import argparse
+import json
 import logging
+import math
 import os
 from pathlib import Path
 
@@ -28,6 +30,34 @@ load_dotenv()
 # huggingFaceToken = os.getenv("HF_TOKEN", None)
 from huggingface_hub import login
 login(token=os.getenv("HF_TOKEN", ""))
+
+def _estimate_batches(args) -> int | None:
+    """Estimate how many batches the input will produce (None for streams or on error).
+
+    Mirrors the ingestor counting rules: non-empty lines for *.log files, items with a
+    template/raw_message for JSON input.
+    """
+    try:
+        if args.stream_url:
+            return None
+        count = 0
+        if args.json_file:
+            with open(args.json_file, encoding="utf-8") as handle:
+                data = json.load(handle)
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                log_data = item.get("log_data", {}) or {}
+                if log_data.get("template") or log_data.get("raw_message"):
+                    count += 1
+        else:
+            for path in sorted(Path(args.log_dir).glob("*.log")):
+                with open(path, errors="ignore") as handle:
+                    count += sum(1 for line in handle if line.strip())
+        return math.ceil(count / args.batch_size) if count else 0
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Log Analysis Pipeline")
@@ -105,8 +135,27 @@ def main() -> None:
         )
         model = EmbeddingModel(config)
 
-    # Pipeline(model, ingestor, writer).run()
-    Pipeline(model, ingestor, writer, max_batches=args.max_batches).run()
+    run_info = {
+        "mode": args.mode,
+        "backend": args.backend,
+        "model_name": args.model_name,
+        "batch_size": args.batch_size,
+        "ollama_host": f"{args.ollama_host}:{args.ollama_port}",
+        "hf_device": args.hf_device,
+        "keep_history": args.keepHistory,
+        "log_dir": None if (args.json_file or args.stream_url) else str(args.log_dir),
+        "json_file": args.json_file,
+        "stream_url": args.stream_url,
+        "masking": {"ips": args.mask_ips, "uuids": args.mask_uuids, "numbers": args.mask_numbers},
+        "expected_batches": _estimate_batches(args),
+    }
+    if args.mode == "embedding":
+        run_info.update({
+            "embedding_model_name": args.embedding_model_name,
+            "embedding_db": args.embedding_db,
+            "embedding_threshold": args.embedding_threshold,
+        })
+    Pipeline(model, ingestor, writer, max_batches=args.max_batches, run_info=run_info).run()
 
 
 if __name__ == "__main__":

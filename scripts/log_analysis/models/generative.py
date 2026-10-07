@@ -234,5 +234,7 @@ class GenerativeModel(BaseModel):
             model_name=self.config.model_name if hasattr(self.config, "model_name") else None,
             token_usage=self._token_usage,
             is_valid_response=is_valid_response,
-            raw_response=raw_output
+            raw_response=raw_output,
+            error_description=data.get("error_description"),
+            recommended_action=data.get("recommended_action"),
         )
