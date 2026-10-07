@@ -1,0 +1,10 @@
+============================================================
+📊 REPORTE DE CONSENSO Y MÉTRICAS
+============================================================
+Total de logs evaluados : 10001
+Logs etiquetados ERROR  : 182 (1.82%)
+Logs etiquetados NORMAL : 9819 (98.18%)
+------------------------------------------------------------
+📈 Inter-Annotator Agreement (Fleiss' Kappa): 0.9710
+============================================================
+Muestra experta guardada en: expert_validation_sample.csv
