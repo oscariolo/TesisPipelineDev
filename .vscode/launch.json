@@ -106,7 +106,8 @@
       "python": "${workspaceFolder}/scripts/.venv/bin/python",
       "program": "${workspaceFolder}/scripts/evaluation/model_evaluation_viz.py",
       "args": [
-        "--batch-size", "10"
+        "--batch-size", "10",
+        "--none-as", "unclassified"
       ]
     },
     {

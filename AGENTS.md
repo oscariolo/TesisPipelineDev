@@ -36,6 +36,10 @@ python dataBuilder/builder.py ./logs ./dataset/log_dataset.jsonl   # build datas
 python dataBuilder/analyze_parsed_dataset.py ./dataset/dataset_slm_procesado_web.json --output ./analysis/dataset_stats.json
 python evaluation/model_evaluation_viz.py                          # defaults to dataset/ vs analysis/ files
 
+# Dashboard: reads analysis/ output, auto-follows the newest run (run_<id>.json)
+python dashboard/app.py                                            # http://127.0.0.1:8050
+python dashboard/app.py --run-id <id>                              # pin a run; --all aggregates them all
+
 # Fine-tune (args mirror .vscode/launch.json)
 python training/training.py --model_name mradermacher/llama-3.2-1B-log-analyzer-GGUF \
   --gguf-file llama-3.2-1B-log-analyzer.f16.gguf \
@@ -53,7 +57,8 @@ docker compose up                    # CPU, no GPU
 
 ## Tests
 
-- The one runnable suite: `python -m unittest evaluation.test_model_evaluation` (2 tests, pass).
+- Runnable unittest suites: `python -m unittest evaluation.test_model_evaluation` (4 tests) and
+  `python -m unittest test_pipeline_telemetry` (2 tests).
 - `test_batch_processing.py` is pytest-style (`monkeypatch`, `tmp_path`) but **pytest is not
   installed** in the venv — it silently does nothing under unittest. Install it (`pip install
   pytest`) before running; do not add it to `requierements.txt` casually.
@@ -68,7 +73,9 @@ docker compose up                    # CPU, no GPU
 - Data structures are **Pydantic v2** models; configs are pydantic `*Config` classes.
 - Every CLI is a plain `argparse` `main()` guarded by `if __name__ == "__main__":`.
 - Output is JSONL appended to `analysis/log_analysis.jsonl`, one `BatchAnalysisResult` per line
-  (`error_found`, `is_valid_response`, `raw_response`, ...).
+  (`error_found`, `is_valid_response`, `raw_response`, plus telemetry: `run_id`, `elapsed_seconds`,
+  `entry_count`, `source_files`, `embedding_hit`, `similarity`, `error_description`). Each run also
+  writes `analysis/run_<run_id>.json` (status, config, totals) which the dashboard reads.
 - Log an LLM failure and continue; a bad batch must never crash the pipeline. Model JSON output is
   parsed leniently (regex for `{`, brace/paren fixups) — keep that tolerance when editing.
 
