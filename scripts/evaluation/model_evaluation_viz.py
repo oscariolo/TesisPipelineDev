@@ -130,7 +130,14 @@ def plot_confusion_from_metrics(
     if not matrix:
         print("[warn] No confusion_matrix in metrics dict — skipping.")
         return None
-    return plot_confusion_matrix(matrix, output_path)
+    size = len(matrix)
+    if size == 2:
+        class_labels = ["Negative (OK)", "Positive (Error)"]
+    elif size == 3:
+        class_labels = ["Negative (OK)", "Positive (Error)", "Unclassified"]
+    else:
+        class_labels = [str(i) for i in range(size)]
+    return plot_confusion_matrix(matrix, output_path, class_labels=class_labels)
 
 
 # ---------------------------------------------------------------------------
@@ -263,33 +270,48 @@ if __name__ == "__main__":
                         help="Label key for comparison file (default: error_found for pipeline output)")
     parser.add_argument("--batch-size", type=int, default=100,
                         help="Batch size for grouping ground-truth logs to match pipeline output (default: 100)")
+    parser.add_argument("--none-as", choices=["negative", "unclassified"], default="negative",
+                        help="How to treat None labels: as negative (binary) or as a separate third class.")
+    parser.add_argument("--unclassified-file", default=None,
+                        help="Path to write the values that could not be classified (default: <output-dir>/<prefix>_unclassified.json)")
     parser.add_argument("--roc", action="store_true",
                         help="Also require ROC data: reads a second comparison file with 'confidence' scores")
     parser.add_argument("--confidence-file", default=None,
                         help="JSONL file with per-batch 'confidence' float field for ROC plot")
     parser.add_argument("--prefix", default="eval",
                         help="Filename prefix for saved diagrams")
+    parser.add_argument("--report-file", default=None,
+                        help="Path to write the JSON evaluation report (default: <output-dir>/<prefix>_report.json)")
+    parser.add_argument("--model-name", default=None,
+                        help="Override the evaluated model name (default: read from the pipeline output)")
+    parser.add_argument("--embedding-model-name", default=None,
+                        help="Override the embedding model name (default: read from the pipeline output)")
     args = parser.parse_args()
 
     evaluator = ModelEvaluator(
         positive_label=True,
         negative_label=False,
         label_key=args.label_key,
+        none_as=args.none_as,
     )
 
     ref_key = args.ref_key or args.label_key
     comp_key = args.comp_key or args.label_key
+
+    unclassified_path = args.unclassified_file or str(pathlib.Path(args.output_dir) / f"{args.prefix}_unclassified.json")
 
     # Standard metrics
     if args.batch_size:
         metrics = evaluator.compare_batches(
             args.reference_file, args.comparison_file,
             batch_size=args.batch_size, reference_key=ref_key, comparison_key=comp_key,
+            unclassified_file=unclassified_path,
         )
     else:
         metrics = evaluator.compare_files(
             args.reference_file, args.comparison_file,
             reference_key=ref_key, comparison_key=comp_key,
+            unclassified_file=unclassified_path,
         )
 
     # ROC data if requested
@@ -322,3 +344,13 @@ if __name__ == "__main__":
     # Generate all diagrams
     paths = generate_report(metrics, args.output_dir, prefix=args.prefix)
     print(f"\nDone. {len(paths)} diagram(s) saved to {args.output_dir}/")
+
+    # JSON report with model + embedding metadata and positive-class (error_found) metrics
+    metadata = evaluator.read_model_metadata(args.comparison_file) if args.comparison_file else {}
+    report_path = args.report_file or str(pathlib.Path(args.output_dir) / f"{args.prefix}_report.json")
+    evaluator.save_report(
+        metrics,
+        report_path,
+        model_name=args.model_name or metadata.get("model_name"),
+        embedder_model_name=args.embedding_model_name or metadata.get("embedder_model_name"),
+    )

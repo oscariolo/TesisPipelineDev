@@ -93,12 +93,15 @@ class EmbeddingModel(BaseModel):
                 model_name=entity.get("model_name", None),
                 embedder_model_name=entity.get("embedder_model_name", None),
                 is_valid_response=True, #if it was gotte from embedding store its assumed valid
-                results=[],
+                embedding_hit=True,
+                similarity=distance,
             )
 
         logger.info("Classifying batch #%d with LLM", batch.batch_id)
         fallback_result = self._fallback.analyze(batch)
         fallback_result.embedder_model_name = self.config.embedding_model_name
+        fallback_result.embedding_hit = False
+        fallback_result.similarity = distance
         if fallback_result.is_valid_response: #solo guarda el embedding si la respuesta del modelo es valida
             self._store_safe().insert(
                 vector,

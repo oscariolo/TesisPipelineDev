@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -23,6 +24,23 @@ from sklearn.metrics import (
 from sklearn.preprocessing import label_binarize
 
 
+def _to_jsonable(value: Any) -> Any:
+    """Recursively convert numpy scalars/arrays into plain JSON-serializable types."""
+    if isinstance(value, dict):
+        return {key: _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, bool):
+        return value
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except (AttributeError, ValueError):
+            return value
+    return value
+
+
 class ModelEvaluator:
     """Evaluate model predictions using scikit-learn's standard metrics.
 
@@ -37,32 +55,46 @@ class ModelEvaluator:
         negative_label: Any = False,
         label_key: str = "error_found",
         labels: Sequence[int] = (0, 1),
+        none_as: str = "negative",
+        unclassified_label: int = 2,
     ) -> None:
+        if none_as not in {"negative", "unclassified"}:
+            raise ValueError("none_as must be 'negative' or 'unclassified'")
         self.positive_label = positive_label
         self.negative_label = negative_label
         self.label_key = label_key
         self.labels = tuple(labels)
+        self.none_as = none_as
+        self.unclassified_label = unclassified_label
+        # Records {source, file, index, value} for every None label encountered in a file.
+        self.unclassified: list[dict[str, Any]] = []
 
-    def _as_binary(self, value: Any) -> int:
+    def _encode_label(self, value: Any) -> int:
+        """Map a raw label to 0 (negative), 1 (positive) or, in unclassified mode, 2."""
+        if value is None:
+            return self.unclassified_label if self.none_as == "unclassified" else 0
         if isinstance(value, bool):
             return int(value)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return 1 if float(value) == 1.0 else 0
+            numeric = float(value)
+            if numeric in (0.0, 1.0, 2.0):
+                return int(numeric)
+            return 1 if numeric == 1.0 else 0
         if isinstance(value, str):
             normalized = value.strip().lower()
             truthy = {"1", "true", "yes", "y", "error", "error_found", "positive"}
             falsy = {"0", "false", "no", "n", "ok", "normal", "negative"}
+            unclassified = {"2", "unclassified", "non-classified", "non classified", "not classified", "unknown", "none", "null", "nan"}
+            if normalized in unclassified:
+                return self.unclassified_label if self.none_as == "unclassified" else 0
             if normalized in truthy:
                 return 1
             if normalized in falsy:
                 return 0
-        if value is None:
-            print("Warning: None value encountered; treating as negative label.")
-            return 0
         return 1 if value == self.positive_label else 0
 
     def _normalize_labels(self, labels: Iterable[Any]) -> list[int]:
-        return [self._as_binary(label) for label in labels]
+        return [self._encode_label(label) for label in labels]
 
     def confusion_matrix(
         self,
@@ -232,43 +264,49 @@ class ModelEvaluator:
         zero_division: float = 0.0,
         average: str = "binary",
     ) -> dict[str, Any]:
+        """Evaluate predictions; precision/recall/f1 always target the positive (error) class.
+
+        Labels are encoded to 0 (negative), 1 (positive) and, when ``none_as`` is
+        ``"unclassified"``, 2 for None. Two-class (binary) metrics are reported for binary
+        data; a third class switches on the 3x3 confusion matrix and per-class breakdown.
+        """
         true_labels = self._normalize_labels(y_true)
         pred_labels = self._normalize_labels(y_pred)
 
-        matrix = self.confusion_matrix(y_true, y_pred, labels=labels)
-        tn, fp = matrix[0]
-        fn, tp = matrix[1]
+        present = set(true_labels) | set(pred_labels)
+        multiclass = not present.issubset({0, 1})
+        if labels is not None:
+            class_labels = list(labels)
+        elif multiclass:
+            class_labels = [0, 1, 2]
+        else:
+            class_labels = [0, 1]
 
-        precision = precision_score(
+        matrix = confusion_matrix(true_labels, pred_labels, labels=class_labels).tolist()
+        positive_index = class_labels.index(1)
+
+        precision, recall, f1, support = precision_recall_fscore_support(
             true_labels,
             pred_labels,
-            average=average,
-            pos_label=1,
-            zero_division=zero_division,
-        )
-        recall = recall_score(
-            true_labels,
-            pred_labels,
-            average=average,
-            pos_label=1,
-            zero_division=zero_division,
-        )
-        f1 = f1_score(
-            true_labels,
-            pred_labels,
-            average=average,
-            pos_label=1,
+            labels=class_labels,
+            average=None,
             zero_division=zero_division,
         )
 
-        return {
+        total = len(true_labels)
+        tp = matrix[positive_index][positive_index]
+        fn = sum(matrix[positive_index]) - tp
+        fp = sum(row[positive_index] for row in matrix) - tp
+        tn = total - tp - fn - fp
+
+        result: dict[str, Any] = {
             "accuracy": accuracy_score(true_labels, pred_labels),
             "balanced_accuracy": balanced_accuracy_score(true_labels, pred_labels),
-            "precision": precision,
-            "recall": recall,
-            "f1_score": f1,
+            "precision": precision[positive_index],
+            "recall": recall[positive_index],
+            "f1_score": f1[positive_index],
             "confusion_matrix": matrix,
-            "classification_report": self.classification_report(y_true, y_pred, labels=[0, 1], zero_division=zero_division),
+            "classes": list(class_labels),
             "matthews_corrcoef": matthews_corrcoef(true_labels, pred_labels),
             "zero_one_loss": zero_one_loss(true_labels, pred_labels),
             "hamming_loss": hamming_loss(true_labels, pred_labels),
@@ -276,9 +314,126 @@ class ModelEvaluator:
             "false_positive": fp,
             "false_negative": fn,
             "true_positive": tp,
-            "support": {"negative": tn + fp, "positive": fn + tp},
-            "total_samples": len(true_labels),
+            "support": {
+                "negative": int(sum(matrix[0])),
+                "positive": int(sum(matrix[positive_index])),
+            },
+            "total_samples": total,
         }
+
+        if multiclass:
+            names = {0: "negative", 1: "positive", 2: "unclassified"}
+            result["per_class"] = {
+                names.get(label, str(label)): {
+                    "precision": precision[index],
+                    "recall": recall[index],
+                    "f1_score": f1[index],
+                    "support": int(support[index]),
+                }
+                for index, label in enumerate(class_labels)
+            }
+            if len(class_labels) > 2:
+                result["support"]["unclassified"] = int(sum(matrix[2]))
+            macro = precision_recall_fscore_support(
+                true_labels, pred_labels, labels=class_labels, average="macro", zero_division=zero_division
+            )
+            weighted = precision_recall_fscore_support(
+                true_labels, pred_labels, labels=class_labels, average="weighted", zero_division=zero_division
+            )
+            result["precision_macro"], result["recall_macro"], result["f1_score_macro"] = macro[0], macro[1], macro[2]
+            result["precision_weighted"], result["recall_weighted"], result["f1_score_weighted"] = (
+                weighted[0],
+                weighted[1],
+                weighted[2],
+            )
+            result["none_as"] = self.none_as
+
+        return result
+
+    def read_model_metadata(self, file_path: str | Path) -> dict[str, Any]:
+        """Return {model_name, embedder_model_name} from the first labelled record.
+
+        Pipeline JSONL/JSON outputs carry ``model_name`` and ``embedder_model_name`` per
+        batch; the first record that has a ``model_name`` is used. Missing fields stay None.
+        """
+        path = Path(file_path)
+        record: dict[str, Any] | None = None
+        if path.suffix.lower() == ".jsonl":
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    candidate = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidate, dict) and candidate.get("model_name") is not None:
+                    record = candidate
+                    break
+        elif path.suffix.lower() == ".json":
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if isinstance(payload, list):
+                candidates = payload
+            elif isinstance(payload, dict) and isinstance(payload.get("results"), list):
+                candidates = payload["results"]
+            else:
+                candidates = []
+            for candidate in candidates:
+                if isinstance(candidate, dict) and candidate.get("model_name") is not None:
+                    record = candidate
+                    break
+        if not isinstance(record, dict):
+            return {"model_name": None, "embedder_model_name": None}
+        return {
+            "model_name": record.get("model_name"),
+            "embedder_model_name": record.get("embedder_model_name"),
+        }
+
+    def build_report(
+        self,
+        metrics: dict[str, Any],
+        model_name: str | None = None,
+        embedder_model_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Attach model metadata and positive-class framing to an evaluation result."""
+        report: dict[str, Any] = {
+            "model_name": model_name,
+            "embedder_model_name": embedder_model_name,
+            "label_key": self.label_key,
+            "positive_class": "error_found (label=1)",
+            "averaging": "positive class only (binary); per-class + macro/weighted for 3 classes",
+            "none_as": self.none_as,
+            "unclassified_count": len(self.unclassified),
+            "evaluated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        report.update(_to_jsonable(metrics))
+        return report
+
+    def save_report(
+        self,
+        metrics: dict[str, Any],
+        output_path: str | Path,
+        model_name: str | None = None,
+        embedder_model_name: str | None = None,
+    ) -> Path:
+        """Write the evaluation result (model metadata + metrics) as a JSON file."""
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        report = self.build_report(metrics, model_name=model_name, embedder_model_name=embedder_model_name)
+        out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"[saved] {out}")
+        return out
+
+    def save_unclassified(self, output_path: str | Path) -> Path:
+        """Write the values that could not be classified (None labels) as a JSON file."""
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            json.dumps(_to_jsonable(self.unclassified), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(f"[saved] {out} ({len(self.unclassified)} unclassified value(s))")
+        return out
 
     def _read_jsonl_records(self, file_path: str | Path) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
@@ -296,8 +451,23 @@ class ModelEvaluator:
                 records.append(parsed)
         return records
 
-    def _coerce_file_labels(self, file_path: str | Path, key: str | None = None) -> list[Any]:
+    def _coerce_file_labels(
+        self,
+        file_path: str | Path,
+        key: str | None = None,
+        source: str | None = None,
+    ) -> list[Any]:
         path = Path(file_path)
+        values = self._read_label_values(path, key)
+        if source is not None:
+            for index, value in enumerate(values):
+                if value is None:
+                    self.unclassified.append(
+                        {"source": source, "file": str(path), "index": index, "value": None}
+                    )
+        return values
+
+    def _read_label_values(self, path: Path, key: str | None = None) -> list[Any]:
         if path.suffix.lower() == ".jsonl":
             records = self._read_jsonl_records(path)
             if not records:
@@ -356,18 +526,23 @@ class ModelEvaluator:
         comparison_key: str | None = None,
         zero_division: float = 0.0,
         average: str = "binary",
+        unclassified_file: str | Path | None = None,
     ) -> dict[str, Any]:
         """Compare a reference file (ground truth) against another file.
 
         By default, the second file is the same as the first one. This makes it easy to
         use the current long-analysis output as both the reference and the candidate while
         later swapping in a different model output.
+
+        When ``unclassified_file`` is given, every None label found in either file is
+        written there as ``{source, file, index, value}``.
         """
         reference_path = Path(reference_file)
         comparison_path = Path(reference_file if comparison_file is None else comparison_file)
 
-        y_true = self._coerce_file_labels(reference_path, key=reference_key)
-        y_pred = self._coerce_file_labels(comparison_path, key=comparison_key)
+        self.unclassified = []
+        y_true = self._coerce_file_labels(reference_path, key=reference_key, source="reference")
+        y_pred = self._coerce_file_labels(comparison_path, key=comparison_key, source="comparison")
 
         if len(y_true) != len(y_pred):
             raise ValueError(
@@ -375,7 +550,10 @@ class ModelEvaluator:
                 f"{len(y_true)} != {len(y_pred)}."
             )
 
-        return self.evaluate(y_true, y_pred, zero_division=zero_division, average=average)
+        metrics = self.evaluate(y_true, y_pred, zero_division=zero_division, average=average)
+        if unclassified_file is not None:
+            self.save_unclassified(unclassified_file)
+        return metrics
 
     def compare_batches(
         self,
@@ -386,22 +564,24 @@ class ModelEvaluator:
         comparison_key: str | None = None,
         zero_division: float = 0.0,
         average: str = "binary",
+        unclassified_file: str | Path | None = None,
     ) -> dict[str, Any]:
         """Compare a per-log reference file against a per-batch comparison file."""
         
+        self.unclassified = []
         # 1. Load all individual logs from the reference file
-        all_logs = self._coerce_file_labels(reference_file, key=reference_key)
+        all_logs = self._coerce_file_labels(reference_file, key=reference_key, source="reference")
         
         # 2. Group them into batches
         reference_batches = []
         for i in range(0, len(all_logs), batch_size):
             batch_slice = all_logs[i:i+batch_size]
             # If ANY log in the batch is an error, the whole batch is marked as an error
-            batch_has_error = any(self._as_binary(label) == 1 for label in batch_slice)
+            batch_has_error = any(self._encode_label(label) == 1 for label in batch_slice)
             reference_batches.append(batch_has_error)
             
         # 3. Load the comparison file (already per-batch from the SLM)
-        y_pred = self._coerce_file_labels(comparison_file, key=comparison_key)
+        y_pred = self._coerce_file_labels(comparison_file, key=comparison_key, source="comparison")
         
         # 4. Truncate both to match the minimum length
         processed_count = len(y_pred)
@@ -413,7 +593,10 @@ class ModelEvaluator:
         y_pred = y_pred[:min_len]
         
         print(f"Evaluando {min_len} batches (cada uno de {batch_size} logs)...")
-        return self.evaluate(y_true, y_pred, zero_division=zero_division, average=average)
+        metrics = self.evaluate(y_true, y_pred, zero_division=zero_division, average=average)
+        if unclassified_file is not None:
+            self.save_unclassified(unclassified_file)
+        return metrics
 
 
 if __name__ == "__main__":
@@ -428,12 +611,19 @@ if __name__ == "__main__":
     parser.add_argument("--positive-label", default="True")
     parser.add_argument("--negative-label", default="False")
     parser.add_argument("--batch-size", type=int, default=None, help="If set, groups the reference file into batches of this size before comparing.")
+    parser.add_argument("--none-as", choices=["negative", "unclassified"], default="negative",
+                        help="How to treat None labels: as negative (binary) or as a separate third class.")
+    parser.add_argument("--report-file", default="analysis/evaluation_report.json", help="Path to write the JSON evaluation report.")
+    parser.add_argument("--unclassified-file", default="analysis/unclassified.json", help="Path to write the values that could not be classified (None labels).")
+    parser.add_argument("--model-name", default=None, help="Override the evaluated model name (default: read from the comparison file).")
+    parser.add_argument("--embedding-model-name", default=None, help="Override the embedding model name (default: read from the comparison file).")
     args = parser.parse_args()
 
     evaluator = ModelEvaluator(
         positive_label=args.positive_label.lower() in {"1", "true", "yes", "y"},
         negative_label=args.negative_label.lower() in {"1", "true", "yes", "y"},
         label_key=args.label_key,
+        none_as=args.none_as,
     )
     
     # metrics = evaluator.compare_files(
@@ -453,6 +643,7 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             reference_key=ref_key,
             comparison_key=comp_key,
+            unclassified_file=args.unclassified_file,
         )
     else:
         metrics = evaluator.compare_files(
@@ -460,6 +651,16 @@ if __name__ == "__main__":
             args.comparison_file,
             reference_key=ref_key,
             comparison_key=comp_key,
+            unclassified_file=args.unclassified_file,
         )
-        
+
+    metadata_file = args.comparison_file or args.reference_file
+    metadata = evaluator.read_model_metadata(metadata_file) if metadata_file else {}
+    evaluator.save_report(
+        metrics,
+        args.report_file,
+        model_name=args.model_name or metadata.get("model_name"),
+        embedder_model_name=args.embedding_model_name or metadata.get("embedder_model_name"),
+    )
+
     print(json.dumps(metrics, indent=2, default=str))
