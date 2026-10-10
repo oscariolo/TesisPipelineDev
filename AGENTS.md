@@ -5,8 +5,9 @@ logs as error/non-error using small language models (SLMs), plus dataset buildin
 and model evaluation. Objectives live in `ThesisSources/MainObjectives.txt`. The runnable code is all
 under `scripts/`; the repo root is just docs and scratch files.
 
-For the pipeline architecture and full `main.py` CLI table, see the more detailed
-`scripts/AGENTS.md` (treat its dependency/test claims as needing verification — some are stale).
+For the pipeline architecture and the full `main.py` CLI table, see `scripts/AGENTS.md`. The pinned
+versions in `scripts/requierements.txt` describe this machine's environment, so re-check them if an
+install fails.
 
 ## Dev environment
 
@@ -57,7 +58,8 @@ docker compose up                    # CPU, no GPU
 
 ## Tests
 
-- Runnable unittest suites: `python -m unittest evaluation.test_model_evaluation` (4 tests) and
+- Runnable unittest suites (run from `scripts/`): `python -m unittest test_generative_response`
+  (11 tests), `python -m unittest evaluation.test_model_evaluation` (7 tests), and
   `python -m unittest test_pipeline_telemetry` (2 tests).
 - `test_batch_processing.py` is pytest-style (`monkeypatch`, `tmp_path`) but **pytest is not
   installed** in the venv — it silently does nothing under unittest. Install it (`pip install
@@ -84,6 +86,10 @@ docker compose up                    # CPU, no GPU
 - `--hf-device` is largely informational: models load with `device_map="auto"` and spill to a
   `./offloading` folder when VRAM is short. Its `main.py` default is `"gpu"`, while `launch.json`
   uses `cuda:0`.
+- Qwen3 HF models default to reasoning mode in their chat template. Thinking is off here by default
+  (`--thinking` enables it); the switch only works through `apply_chat_template(enable_thinking=...)`,
+  and enabling it auto-raises `--max-new-tokens` to 1024 because reasoning otherwise eats the budget
+  and truncates the JSON answer.
 - `EmbeddingConfig` hardcodes `clearCollectionAtStartup=True` in `main.py` — the Milvus Lite
   collection is wiped every run.
 - Generated artifacts, do not hand-edit: `analysis/*`, `embeddings/log_embeddings.db` (Milvus Lite),
