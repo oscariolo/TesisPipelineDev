@@ -112,6 +112,33 @@
       ]
     },
     {
+      "name": "Pseudo-Labeling: 1. Preprocessor",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "program": "${workspaceFolder}/scripts/pseudo_labeling/log_preprocessor.py"
+    },
+    {
+      "name": "Pseudo-Labeling: 2. Batch Runner (Full)",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "program": "${workspaceFolder}/scripts/pseudo_labeling/batch_runner.py",
+      "args": [
+        "--mode", "full"
+      ]
+    },
+    {
+      "name": "Pseudo-Labeling: 3. Consensus Engine",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scripts",
+      "python": "${workspaceFolder}/scripts/.venv/bin/python",
+      "program": "${workspaceFolder}/scripts/pseudo_labeling/consensus_engine.py"
+    },
+    {
       "name": "Analyze parsed dataset",
       "type": "debugpy",
       "request": "launch",
@@ -145,7 +172,6 @@
         "--lora_bias", "none"
       ]
     }
-    
   ]
 }
 
