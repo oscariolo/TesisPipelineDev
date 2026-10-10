@@ -80,6 +80,11 @@ def main() -> None:
     parser.add_argument("--stream-url", default=None, help="Read logs as a stream from this service URL instead of a file")
     parser.add_argument("--poll-interval", type=float, default=5.0, help="Seconds to wait between stream batch reads")
     parser.add_argument("--contextWindow", type=int, default=None, help="Maximum context window for the model (default: auto-detect)")
+    parser.add_argument("--thinking", action="store_true",
+                        default=os.getenv("THINKING", "").strip().lower() in {"1", "true", "yes", "y"},
+                        help="Enable model reasoning/thinking mode (default: off). Qwen3 defaults to ON in its chat template.")
+    parser.add_argument("--max-new-tokens", type=int, default=200,
+                        help="Completion budget per call (default: 200). Thinking mode needs ~1024+.")
     parser.add_argument("--keepHistory", choices=["perPrompt", "always", "tokenLimit"], default="perPrompt", help="How to keep the conversation history")
     parser.add_argument("--tokenLimitPercentage", type=float, default=1.0, help="Percentage of context window to trigger history clearing in tokenLimit mode")
     parser.add_argument("--mask-ips", action="store_true", help="Mask IP addresses in logs")
@@ -106,7 +111,8 @@ def main() -> None:
             ollama_host=args.ollama_host,
             ollama_port=args.ollama_port,
             hf_device=args.hf_device,
-            thinking=False,  # Set to True if you want to enable thinking mode
+            thinking=args.thinking,
+            max_new_tokens=args.max_new_tokens,
             tokenizer_name=args.tokenizer_name,
             gguf_file=args.gguf_file,
             keepHistory=args.keepHistory,
@@ -121,7 +127,8 @@ def main() -> None:
                 ollama_host=args.ollama_host,
                 ollama_port=args.ollama_port,
                 hf_device=args.hf_device,
-                thinking=False,
+                thinking=args.thinking,
+                max_new_tokens=args.max_new_tokens,
                 tokenizer_name=args.tokenizer_name,
                 gguf_file=args.gguf_file,
                 keepHistory=args.keepHistory,
@@ -143,6 +150,8 @@ def main() -> None:
         "ollama_host": f"{args.ollama_host}:{args.ollama_port}",
         "hf_device": args.hf_device,
         "keep_history": args.keepHistory,
+        "thinking": args.thinking,
+        "max_new_tokens": args.max_new_tokens,
         "log_dir": None if (args.json_file or args.stream_url) else str(args.log_dir),
         "json_file": args.json_file,
         "stream_url": args.stream_url,

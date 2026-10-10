@@ -11,28 +11,43 @@ from log_analysis.core.log_entry import LogBatch, BatchAnalysisResult
 from log_analysis.models.base import BaseModel
 import ollama
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
-PROMPT_TEMPLATE = """Determine if there is an error in this group of logs.Respond ONLY with valid JSON in this exact format, do not include any extra text or explanations:
-{{
-  "is_error": true or false,
-  "error_description": "brief description of the error or null",
-  "recommended_action": "what action to take or null"
-}}
-
-Log entry: {raw_text}"""
-
 SYSTEM_PROMPT = {
-        "role": "system",
-        "content": """You are a log analysis assistant. You will be given a group of log entries. Your task is to determine if there is an error in this group of logs. Respond ONLY with valid JSON in this exact format, do not include any extra text or explanations.
-{
-    "is_error": true or false,
-    "error_description": "brief description of the error or null",
-    "recommended_action": "what action to take or null"
-}""",
+    "role": "system",
+    "content": (
+        "You are a log analysis assistant. You will be given a group of log entries. "
+        "Determine if there is an error in this group. "
+        "Reply with raw JSON only, in exactly this shape:\n"
+        '{"is_error": true or false, "error_description": "brief description or null", '
+        '"recommended_action": "what to do or null"}\n'
+        "Do not add explanations, markdown code fences, or any text before or after the JSON."
+    ),
 }
+
+# Reasoning blocks emitted by thinking models (Qwen3 wraps them in fullwidth angle brackets).
+THINK_BLOCK_RE = re.compile(
+    r"[<\uff1c]\s*think(?:ing)?\s*[>\uff1e].*?[<\uff1c]\s*/\s*think(?:ing)?\s*[>\uff1e]",
+    re.DOTALL | re.IGNORECASE,
+)
+THINK_OPEN_RE = re.compile(r"[<\uff1c]\s*think(?:ing)?\s*[>\uff1e]", re.IGNORECASE)
+CODE_FENCE_RE = re.compile(r"```[A-Za-z0-9_-]*")
+
+# Thinking mode needs a much larger completion budget than a single JSON object.
+THINKING_MIN_NEW_TOKENS = 1024
+
+
+def _strip_reasoning(text: str) -> str:
+    """Drop reasoning blocks and markdown fences so only the JSON answer is left."""
+    text = CODE_FENCE_RE.sub("", text)
+    text = THINK_BLOCK_RE.sub(" ", text)
+    unclosed = THINK_OPEN_RE.search(text)
+    if unclosed:
+        brace = text.find("{", unclosed.end())
+        text = text[brace:] if brace != -1 else text[: unclosed.start()]
+    return text.strip()
 
 def getMaxVramAvailable() -> int:
     """Returns the maximum VRAM available on the current device in bytes."""
@@ -55,6 +70,7 @@ class GenerativeConfig(PydanticBaseModel):
     ollama_port: int = 11434
     hf_device: str = "cpu"
     thinking: bool = False
+    max_new_tokens: int = 512  # completion budget per batch; thinking mode needs much more
     bit_precision: Optional[str] = None  # e.g., "fp16", "int8", etc. for Hugging Face models
     tokenizer_name: Optional[str] = None  # e.g., base model repo when loading a GGUF model
     gguf_file: Optional[str] = None  # e.g., "Qwen3.6-27B-Q4_K_M.gguf" for GGUF repos
@@ -67,9 +83,12 @@ class GenerativeModel(BaseModel):
         self._model = None
         self._tokenizer = None
         self._messages = []  # For chat history if applies
-        self._context_window = config.contextWindow or self._getMaxContextWindow()
         self._token_usage = 0
+        self._context_window = config.contextWindow
         self.instanceModelClient()
+        # Resolve the window after the client exists so the HF backend can read the model config.
+        if self._context_window is None:
+            self._context_window = self._getMaxContextWindow()
 
 
     def instanceModelClient(self):
@@ -87,18 +106,16 @@ class GenerativeModel(BaseModel):
             maxWindow = details.get("modelinfo", {}).get("llama.context_length", 4096)
             return maxWindow
         if self.config.backend == "huggingface":
-            if(self.config.gguf_file is not None): #takes as if the model is gguf
-                model_id = self.config.model_name
-                gguf_file = self.config.gguf_file
-            else:
-                model_id = self.config.model_name
-                gguf_file = None
-
+            # Prefer the model's own limit; tokenizer.model_max_length can be a huge sentinel.
+            model_config = getattr(self._model, "config", None)
+            max_positions = getattr(model_config, "max_position_embeddings", None)
+            if max_positions:
+                return int(max_positions)
             if self._tokenizer is None:
-                self._tokenizer = AutoTokenizer.from_pretrained(model_id, gguf_file=gguf_file, device_map="auto")
-            max_length = self._tokenizer.model_max_length
-        #check wether device can handle the max, if not, get the max that can be handled by the device
-            return max_length
+                self._tokenizer = AutoTokenizer.from_pretrained(
+                    self.config.model_name, gguf_file=self.config.gguf_file
+                )
+            return int(self._tokenizer.model_max_length)
         return 4096
 
     def _load_hf(self):
@@ -110,7 +127,9 @@ class GenerativeModel(BaseModel):
             tokenizer_name = self.config.tokenizer_name or self.config.model_name
 
         if self._tokenizer is None:
-            self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, gguf_file=self.config.gguf_file, device_map="auto")
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                tokenizer_name, gguf_file=self.config.gguf_file
+            )
         self._model = AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
             device_map="auto",
@@ -120,13 +139,19 @@ class GenerativeModel(BaseModel):
 
     def _call_hf(self, batch_size: int = 0) -> tuple[str, int]:
         if getattr(self._tokenizer, "chat_template", None):
-            inputs = self._tokenizer.apply_chat_template(
-                self._messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt",
-            )
+            template_kwargs = {
+                "tokenize": True,
+                "add_generation_prompt": True,
+                "return_dict": True,
+                "return_tensors": "pt",
+            }
+     
+            try:
+                inputs = self._tokenizer.apply_chat_template(
+                    self._messages, enable_thinking=self.config.thinking, **template_kwargs
+                )
+            except TypeError:
+                inputs = self._tokenizer.apply_chat_template(self._messages, **template_kwargs)
         else:
             prompt = "\n\n".join(
                 f"{message['role'].upper()}:\n{message['content']}"
@@ -140,7 +165,15 @@ class GenerativeModel(BaseModel):
         device = next(self._model.parameters()).device
         inputs = {k: v.to(device) for k, v in inputs.items()}
         # Safety: cap max_new_tokens to avoid unbounded generation OOM
-        gen_kwargs = {"max_new_tokens": 200}
+        max_new_tokens = self.config.max_new_tokens
+        if self.config.thinking and max_new_tokens < THINKING_MIN_NEW_TOKENS:
+            logger.warning(
+                "max_new_tokens=%d is too small for thinking mode; using %d so the answer is not truncated",
+                max_new_tokens,
+                THINKING_MIN_NEW_TOKENS,
+            )
+            max_new_tokens = THINKING_MIN_NEW_TOKENS
+        gen_kwargs = {"max_new_tokens": max_new_tokens}
         outputs = self._model.generate(**inputs, **gen_kwargs)
         prompt_length = inputs["input_ids"].shape[-1]
         generated_length = outputs[0].shape[-1] - prompt_length
@@ -163,7 +196,9 @@ class GenerativeModel(BaseModel):
         return response["message"]["content"].strip(), token_usage
 
     def _parse_response(self, text: str) -> dict:
+        text = _strip_reasoning(text)
         decoder = json.JSONDecoder()
+        fallback: dict | None = None
         for match in re.finditer(r"\{", text):
             candidate = text[match.start():]
             try:
@@ -178,8 +213,14 @@ class GenerativeModel(BaseModel):
                     continue
             if isinstance(json_result, dict):
                 json_result["is_valid_response"] = True
-                return json_result
+                # Prefer the real answer over an example object quoted inside prose.
+                if "is_error" in json_result:
+                    return json_result
+                if fallback is None:
+                    fallback = json_result
 
+        if fallback is not None:
+            return fallback
         logger.warning("Failed to parse JSON from model output: %.200s", text)
         return {"is_valid_response": False}
 
@@ -217,13 +258,21 @@ class GenerativeModel(BaseModel):
         logger.info("LLM batch #%d analyzed in %.3fs", batch.batch_id, elapsed)
 
         data = self._parse_response(raw_output)
-        error_found = bool(data.get("is_error", False))
+        
         is_valid_response = bool(data.get("is_valid_response", False))
+
+        if is_valid_response:
+            error_found = bool(data.get("is_error", False))
 
         logger.info("Current token usage: %d, context window: %d", self._token_usage, self._context_window)
 
         #tokenLimit mode: si supera un porcentaje de tokens se limpia historial para el siguiente batch (reinicio de contexto)
-        if self.config.keepHistory == "tokenLimit" and self._token_usage >= self._context_window*self.config.tokenLimitPercentage:
+        if (
+            self.config.keepHistory == "tokenLimit"
+            and self._context_window
+            and self.config.tokenLimitPercentage
+            and self._token_usage >= self._context_window * self.config.tokenLimitPercentage
+        ):
             self._messages = []
             self._token_usage = 0
 

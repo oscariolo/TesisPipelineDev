@@ -1,0 +1,39 @@
+{
+  "run_id": "20261010-184507",
+  "status": "finished",
+  "started_at": "2026-10-10T18:45:07+00:00",
+  "updated_at": "2026-10-10T18:48:25+00:00",
+  "run_info": {
+    "mode": "embedding",
+    "backend": "huggingface",
+    "model_name": "mradermacher/llama-3.2-1B-log-analyzer-GGUF",
+    "batch_size": 10,
+    "ollama_host": "localhost:11434",
+    "hf_device": "cuda:0",
+    "keep_history": "perPrompt",
+    "thinking": false,
+    "max_new_tokens": 200,
+    "log_dir": "logs",
+    "json_file": null,
+    "stream_url": null,
+    "masking": {
+      "ips": false,
+      "uuids": false,
+      "numbers": false
+    },
+    "expected_batches": 1001,
+    "embedding_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_db": "./embeddings/log_embeddings.db",
+    "embedding_threshold": 0.8
+  },
+  "totals": {
+    "batches": 1001,
+    "entries": 10001,
+    "errors": 19,
+    "invalid": 1,
+    "embedding_hits": 842,
+    "embedding_misses": 159,
+    "elapsed_seconds": 190.491
+  },
+  "finished_at": "2026-10-10T18:48:25+00:00"
+}

@@ -21,11 +21,11 @@ class AnalysisResult(BaseModel):
 
 class BatchAnalysisResult(BaseModel):
     batch_id: int
-    error_found: bool = False
+    error_found: Optional[bool] = False
     model_name: Optional[str] = None
     embedder_model_name: Optional[str] = None
     token_usage: Optional[int] = None
-    is_valid_response: Optional[bool] = False
+    is_valid_response: bool = False
     raw_response: Optional[str] = None
     # Pipeline telemetry (optional so existing records still parse).
     run_id: Optional[str] = None
