@@ -74,11 +74,12 @@
       "args": [
         "--mode", "embedding",
         "--backend", "huggingface",
-        "--model-name", "mradermacher/llama-3.2-1B-log-analyzer-GGUF",
-        "--tokenizer-name", "meta-llama/Llama-3.2-1B", //gguf file should contain the tokenizer, but we can specify it explicitly if needed
-        "--gguf-file", "llama-3.2-1B-log-analyzer.f16.gguf",
+        "--model-name", "Qwen/Qwen3-0.6B",
+        "--tokenizer-name", "Qwen/Qwen3-0.6B", //gguf file should contain the tokenizer, but we can specify it explicitly if needed
+        //"--gguf-file", "llama-3.2-1B-log-analyzer.f16.gguf",
         "--hf-device", "cuda:0",
-        "--max_new_tokens", "512",
+        "--max-new-tokens", "512",
+        "--evaluate",
         "--embedding-model-name", "sentence-transformers/all-MiniLM-L6-v2",
         "--embedding-db", "./embeddings/log_embeddings.db",
         "--embedding-threshold", "0.8",
@@ -107,8 +108,13 @@
       "python": "${workspaceFolder}/scripts/.venv/bin/python",
       "program": "${workspaceFolder}/scripts/evaluation/model_evaluation_viz.py",
       "args": [
+        "${workspaceFolder}/scripts/pseudo_labeling/data/ground_truth_dataset.jsonl",
+        "--ref-key", "consensus_is_error",
+        "--comp-key", "error_found",
         "--batch-size", "10",
-        "--none-as", "unclassified"
+        "--none-as", "unclassified",
+        "--model-name", "mradermacher/llama-3.2-1B-log-analyzer-GGUF",
+        "--embedding-model-name", "sentence-transformers/all-MiniLM-L6-v2"
       ]
     },
     {

@@ -2,7 +2,8 @@
 
 Thesis project: a batch log-analysis pipeline for the DTIC (Universidad de Cuenca) that classifies
 logs as error/non-error using small language models (SLMs), plus dataset building, LoRA fine-tuning,
-and model evaluation. Objectives live in `ThesisSources/MainObjectives.txt`. The runnable code is all
+and model evaluation, plus a three-stage multi-model pseudo-labeling pipeline for the ground
+truth. Objectives live in `ThesisSources/MainObjectives.txt`. The runnable code is all
 under `scripts/`; the repo root is just docs and scratch files.
 
 For the pipeline architecture and the full `main.py` CLI table, see `scripts/AGENTS.md`. The pinned
@@ -32,10 +33,16 @@ python main.py --help                                              # verified
 python main.py --mode generative --backend ollama  --model-name qwen3.6:latest
 python main.py --mode generative --backend huggingface --model-name HuggingFaceTB/SmolLM2-1.7B --hf-device cuda:0
 python main.py --mode embedding                                    # vector lookup, LLM fallback on first sight
+python main.py --analysis-dir ./analysis --evaluate                 # output + evaluation in analysis/<model>/
 
 python dataBuilder/builder.py ./logs ./dataset/log_dataset.jsonl   # build dataset
 python dataBuilder/analyze_parsed_dataset.py ./dataset/dataset_slm_procesado_web.json --output ./analysis/dataset_stats.json
-python evaluation/model_evaluation_viz.py                          # defaults to dataset/ vs analysis/ files
+
+# Ground truth, 3 ordered stages (preprocess -> annotate with 3 Ollama models -> consensus)
+python pseudo_labeling/log_preprocessor.py
+python pseudo_labeling/batch_runner.py --mode test --limit 30      # smoke test; --mode full for everything
+python pseudo_labeling/consensus_engine.py
+python evaluation/model_evaluation_viz.py                          # reads dataset/ vs analysis/, writes analysis/<model>/
 
 # Dashboard: reads analysis/ output, auto-follows the newest run (run_<id>.json)
 python dashboard/app.py                                            # http://127.0.0.1:8050
@@ -58,9 +65,9 @@ docker compose up                    # CPU, no GPU
 
 ## Tests
 
-- Runnable unittest suites (run from `scripts/`): `python -m unittest test_generative_response`
-  (11 tests), `python -m unittest evaluation.test_model_evaluation` (7 tests), and
-  `python -m unittest test_pipeline_telemetry` (2 tests).
+- Runnable unittest suites (run from `scripts/`, 32 tests total): `test_generative_response` (11),
+  `evaluation.test_model_evaluation` (12), `test_naming` (5), `test_evaluation_runner` (2) and
+  `test_pipeline_telemetry` (2) — e.g. `python -m unittest test_naming`.
 - `test_batch_processing.py` is pytest-style (`monkeypatch`, `tmp_path`) but **pytest is not
   installed** in the venv — it silently does nothing under unittest. Install it (`pip install
   pytest`) before running; do not add it to `requierements.txt` casually.
@@ -74,10 +81,12 @@ docker compose up                    # CPU, no GPU
   `dataBuilder/`, `evaluation/`, `training/`.
 - Data structures are **Pydantic v2** models; configs are pydantic `*Config` classes.
 - Every CLI is a plain `argparse` `main()` guarded by `if __name__ == "__main__":`.
-- Output is JSONL appended to `analysis/log_analysis.jsonl`, one `BatchAnalysisResult` per line
-  (`error_found`, `is_valid_response`, `raw_response`, plus telemetry: `run_id`, `elapsed_seconds`,
-  `entry_count`, `source_files`, `embedding_hit`, `similarity`, `error_description`). Each run also
-  writes `analysis/run_<run_id>.json` (status, config, totals) which the dashboard reads.
+- Output is one folder per model: `analysis/<model>/log_analysis.jsonl` (one `BatchAnalysisResult`
+  per line — `error_found`, `is_valid_response`, `raw_response`, plus telemetry: `run_id`,
+  `elapsed_seconds`, `entry_count`, `source_files`, `embedding_hit`, `similarity`,
+  `error_description`), the matching `log_analysis.json`, and `run_<run_id>.json` (status, config,
+  totals) which the dashboard reads. `--analysis-dir` / `--output-dir` set the parent; the `<model>`
+  folder is always appended.
 - Log an LLM failure and continue; a bad batch must never crash the pipeline. Model JSON output is
   parsed leniently (regex for `{`, brace/paren fixups) — keep that tolerance when editing.
 
@@ -94,6 +103,12 @@ docker compose up                    # CPU, no GPU
   collection is wiped every run.
 - Generated artifacts, do not hand-edit: `analysis/*`, `embeddings/log_embeddings.db` (Milvus Lite),
   `fine_tuned_model/checkpoint-*`, `dataset/dataset_slm_procesado_web.json`.
+- `pseudo_labeling/` runs in order (1 preprocess, 2 batch_runner, 3 consensus). Stage 2 needs three
+  Ollama models pulled — `qwen2.5:7b`, `llama3.1:8b`, `mistral:7b` — and stage 3 needs **pandas**,
+  which is installed in the venv but not pinned in `scripts/requierements.txt`.
+- Pipeline output and its evaluation live together in `analysis/<model>/`; `python main.py --evaluate`
+  fills the report and plots for that run only (scoped by `run_id`). In streaming mode the run never
+  ends on its own, so the evaluation fires on Ctrl-C or `--max-batches`.
 - `.vscode/launch.json` is stale: its "Builder log dataset" config points at
   `scripts/log_analysis/dataset/builder.py`, which does not exist — the builder lives at
   `scripts/dataBuilder/builder.py`.
