@@ -7,6 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from log_analysis.core.log_ingestor import FileLogIngestor, StreamLogIngestor, JsonLogIngestor, LogMasker
+from log_analysis.core.naming import model_output_dir
 from log_analysis.core.pipeline import Pipeline
 from log_analysis.models.embedding import EmbeddingConfig, EmbeddingModel
 from log_analysis.models.generative import GenerativeConfig, GenerativeModel
@@ -74,7 +75,22 @@ def main() -> None:
     parser.add_argument("--embedding-threshold", type=float, default=0.8, help="Minimum cosine similarity to reuse a stored classification")
     parser.add_argument("--json-file", default=None, help="Path to a JSON file containing parsed logs to ingest")
     parser.add_argument("--log-dir", type=Path, default="./logs")
-    parser.add_argument("--output-dir", type=Path, default="./analysis")
+    parser.add_argument("--analysis-dir", type=Path, default=Path("./analysis"),
+                        help="Parent folder holding one subfolder per model (default: ./analysis).")
+    parser.add_argument("--output-dir", type=Path, default=None,
+                        help="Alias for --analysis-dir; the per-model folder is always appended.")
+    parser.add_argument("--evaluate", action="store_true",
+                        help="Run the evaluation once the pipeline stops (default: off).")
+    parser.add_argument("--eval-reference", default="dataset/dataset_slm_procesado_web.json",
+                        help="Ground-truth file compared against by --evaluate.")
+    parser.add_argument("--eval-ref-key", default="ground_truth_label.is_error",
+                        help="Label key inside --eval-reference (default: ground_truth_label.is_error).")
+    parser.add_argument("--eval-comp-key", default="error_found",
+                        help="Prediction key inside the pipeline output (default: error_found).")
+    parser.add_argument("--eval-batch-size", type=int, default=None,
+                        help="Batch size for grouping the ground truth in --evaluate (default: --batch-size).")
+    parser.add_argument("--eval-none-as", choices=["negative", "unclassified"], default="negative",
+                        help="How --evaluate treats None labels (default: negative).")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--max-batches", type=int, default=None, help="Maximum number of batches to process")
     parser.add_argument("--stream-url", default=None, help="Read logs as a stream from this service URL instead of a file")
@@ -102,7 +118,8 @@ def main() -> None:
         ingestor = StreamLogIngestor(args.stream_url, batch_size=args.batch_size, poll_interval=args.poll_interval, masker=masker)
     else:
         ingestor = FileLogIngestor(args.log_dir, batch_size=args.batch_size, masker=masker)
-    writer = JsonWriter(args.output_dir)
+    output_dir = model_output_dir(args.output_dir or args.analysis_dir, args.model_name)
+    writer = JsonWriter(output_dir)
 
     if args.mode == "generative":
         config = GenerativeConfig(
@@ -155,6 +172,7 @@ def main() -> None:
         "log_dir": None if (args.json_file or args.stream_url) else str(args.log_dir),
         "json_file": args.json_file,
         "stream_url": args.stream_url,
+        "output_dir": str(output_dir),
         "masking": {"ips": args.mask_ips, "uuids": args.mask_uuids, "numbers": args.mask_numbers},
         "expected_batches": _estimate_batches(args),
     }
@@ -164,7 +182,41 @@ def main() -> None:
             "embedding_db": args.embedding_db,
             "embedding_threshold": args.embedding_threshold,
         })
-    Pipeline(model, ingestor, writer, max_batches=args.max_batches, run_info=run_info).run()
+    pipeline = Pipeline(model, ingestor, writer, max_batches=args.max_batches, run_info=run_info)
+    try:
+        pipeline.run()
+    except KeyboardInterrupt:
+        # The normal way to end a stream; fall through so --evaluate still runs.
+        print("\nInterrupted - pipeline stopped.")
+
+    if args.evaluate:
+        _evaluate_run(args, output_dir, pipeline.run_id)
+
+
+def _evaluate_run(args, output_dir: Path, run_id: str) -> None:
+    """Evaluate this run's output in place; never let the evaluation break the pipeline."""
+    reference = Path(args.eval_reference)
+    if not reference.exists():
+        print(f"Evaluation skipped: reference file not found ({reference}).")
+        return
+    try:
+        from evaluation.model_evaluation_viz import run_evaluation
+
+        result = run_evaluation(
+            reference_file=reference,
+            comparison_file=output_dir / "log_analysis.jsonl",
+            output_dir=output_dir,
+            batch_size=args.eval_batch_size or args.batch_size,
+            reference_key=args.eval_ref_key,
+            comparison_key=args.eval_comp_key,
+            none_as=args.eval_none_as,
+            model_name=args.model_name,
+            embedder_model_name=args.embedding_model_name if args.mode == "embedding" else None,
+            run_id=run_id,
+        )
+        print(f"Evaluation written to {result['output_dir']}")
+    except Exception as exc:  # metrics may be impossible; the pipeline output still stands
+        print(f"Evaluation failed ({type(exc).__name__}: {exc}); the pipeline output is intact.")
 
 
 if __name__ == "__main__":

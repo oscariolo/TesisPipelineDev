@@ -1,0 +1,43 @@
+{
+  "model_name": "Qwen/Qwen3-0.6B",
+  "embedder_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+  "label_key": "error_found",
+  "positive_class": "error_found (label=1)",
+  "averaging": "positive class only (binary); per-class + macro/weighted for 3 classes",
+  "none_as": "unclassified",
+  "unclassified_count": 0,
+  "evaluated_at": "2026-10-10T19:37:26",
+  "accuracy": 0.8281718281718282,
+  "balanced_accuracy": 0.5,
+  "precision": 0.0,
+  "recall": 0.0,
+  "f1_score": 0.0,
+  "confusion_matrix": [
+    [
+      829,
+      0
+    ],
+    [
+      172,
+      0
+    ]
+  ],
+  "classes": [
+    0,
+    1
+  ],
+  "matthews_corrcoef": 0.0,
+  "zero_one_loss": 0.17182817182817178,
+  "hamming_loss": 0.17182817182817184,
+  "true_negative": 829,
+  "false_positive": 0,
+  "false_negative": 172,
+  "true_positive": 0,
+  "support": {
+    "negative": 829,
+    "positive": 172
+  },
+  "total_samples": 1001,
+  "reference_file": "/home/oscariolodebian/Tesis/scripts/pseudo_labeling/data/ground_truth_dataset.jsonl",
+  "comparison_file": "/home/oscariolodebian/Tesis/scripts/analysis/Qwen-Qwen3-0.6B/log_analysis.jsonl"
+}

@@ -10,6 +10,8 @@ MODEL_EVALUATION_MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC is not None and SPEC.loader is not None
 SPEC.loader.exec_module(MODEL_EVALUATION_MODULE)
 ModelEvaluator = MODEL_EVALUATION_MODULE.ModelEvaluator
+sanitize_model_name = MODEL_EVALUATION_MODULE.sanitize_model_name
+model_evaluation_dir = MODEL_EVALUATION_MODULE.model_evaluation_dir
 
 
 class ModelEvaluatorTest(unittest.TestCase):
@@ -69,25 +71,6 @@ class ModelEvaluatorTest(unittest.TestCase):
             self.assertEqual(report["recall"], 0.5)
             self.assertAlmostEqual(report["f1_score"], 0.6666666666666666)
 
-    def test_read_model_metadata_skips_records_without_model_name(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "log_analysis.jsonl"
-            path.write_text(
-                json.dumps({"batch_id": 1, "raw_response": "not json"}) + "\n"
-                + json.dumps({
-                    "batch_id": 2,
-                    "error_found": True,
-                    "model_name": "qwen3.6:latest",
-                    "embedder_model_name": "sentence-transformers/all-MiniLM-L6-v2",
-                }) + "\n",
-                encoding="utf-8",
-            )
-
-            metadata = ModelEvaluator().read_model_metadata(path)
-
-            self.assertEqual(metadata["model_name"], "qwen3.6:latest")
-            self.assertEqual(metadata["embedder_model_name"], "sentence-transformers/all-MiniLM-L6-v2")
-
     def test_none_as_unclassified_creates_third_class(self):
         evaluator = ModelEvaluator(label_key="error_found", none_as="unclassified")
         target = [True, True, False, None]
@@ -142,6 +125,76 @@ class ModelEvaluatorTest(unittest.TestCase):
             self.assertTrue(all(entry["value"] is None for entry in saved))
             reference_entries = [entry for entry in saved if entry["source"] == "reference"]
             self.assertEqual([entry["index"] for entry in reference_entries], [2])
+
+
+    def test_run_id_filter_keeps_only_that_run(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference = Path(temp_dir) / "ref.jsonl"
+            comparison = Path(temp_dir) / "comp.jsonl"
+            reference.write_text(
+                "\n".join(json.dumps(row) for row in [
+                    {"error_found": True},
+                    {"error_found": False},
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            comparison.write_text(
+                "\n".join(json.dumps(row) for row in [
+                    {"run_id": "A", "error_found": True},
+                    {"run_id": "A", "error_found": False},
+                    {"run_id": "B", "error_found": False},
+                    {"run_id": "B", "error_found": False},
+                ]) + "\n",
+                encoding="utf-8",
+            )
+
+            evaluator = ModelEvaluator(label_key="error_found")
+            metrics = evaluator.compare_files(reference, comparison, run_id="A")
+
+            self.assertEqual(metrics["total_samples"], 2)
+            self.assertEqual(metrics["true_positive"], 1)
+
+    def test_run_id_filter_does_not_filter_the_reference(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference = Path(temp_dir) / "ref.jsonl"
+            comparison = Path(temp_dir) / "comp.jsonl"
+            # Ground truth carries no run_id; it must survive the filter untouched.
+            reference.write_text(
+                json.dumps({"error_found": True}) + "\n" + json.dumps({"error_found": False}) + "\n",
+                encoding="utf-8",
+            )
+            comparison.write_text(
+                json.dumps({"run_id": "A", "error_found": True}) + "\n"
+                + json.dumps({"run_id": "A", "error_found": False}) + "\n",
+                encoding="utf-8",
+            )
+
+            metrics = ModelEvaluator(label_key="error_found").compare_files(
+                reference, comparison, run_id="A"
+            )
+
+            self.assertEqual(metrics["total_samples"], 2)
+
+
+class ModelOutputFolderTest(unittest.TestCase):
+    def test_repo_id_becomes_a_single_folder_name(self):
+        self.assertEqual(
+            sanitize_model_name("mradermacher/llama-3.2-1B-log-analyzer-GGUF"),
+            "mradermacher-llama-3.2-1B-log-analyzer-GGUF",
+        )
+        self.assertEqual(sanitize_model_name("Qwen/Qwen3-0.6B"), "Qwen-Qwen3-0.6B")
+        self.assertEqual(sanitize_model_name("qwen3.6:latest"), "qwen3.6-latest")
+        self.assertEqual(sanitize_model_name("  llama3.1:8b  "), "llama3.1-8b")
+
+    def test_folder_sits_under_analysis(self):
+        self.assertEqual(
+            model_evaluation_dir("analysis", "Qwen/Qwen3-0.6B"),
+            Path("analysis") / "Qwen-Qwen3-0.6B",
+        )
+
+    def test_unknown_model_falls_back_to_eval_plots(self):
+        self.assertEqual(model_evaluation_dir("analysis", None), Path("analysis") / "eval_plots")
+        self.assertEqual(sanitize_model_name("///"), "unknown-model")
 
 
 if __name__ == "__main__":

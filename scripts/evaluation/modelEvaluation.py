@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -23,6 +24,13 @@ from sklearn.metrics import (
 )
 from sklearn.preprocessing import label_binarize
 
+# Make log_analysis importable when this file is run directly (scripts/evaluation is sys.path[0]).
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from log_analysis.core.naming import sanitize_model_name  # noqa: E402  (re-exported for callers)
+
 
 def _to_jsonable(value: Any) -> Any:
     """Recursively convert numpy scalars/arrays into plain JSON-serializable types."""
@@ -39,6 +47,18 @@ def _to_jsonable(value: Any) -> Any:
         except (AttributeError, ValueError):
             return value
     return value
+
+
+def model_evaluation_dir(analysis_dir: str | Path, model_name: str | None) -> Path:
+    """Per-model evaluation folder: <analysis_dir>/<model_name>/.
+
+    Falls back to <analysis_dir>/eval_plots when the model name is unknown, so an evaluation that
+    cannot be attributed to a model still lands somewhere predictable.
+    """
+    analysis_dir = Path(analysis_dir)
+    if not model_name:
+        return analysis_dir / "eval_plots"
+    return analysis_dir / sanitize_model_name(model_name)
 
 
 class ModelEvaluator:
@@ -350,45 +370,6 @@ class ModelEvaluator:
 
         return result
 
-    def read_model_metadata(self, file_path: str | Path) -> dict[str, Any]:
-        """Return {model_name, embedder_model_name} from the first labelled record.
-
-        Pipeline JSONL/JSON outputs carry ``model_name`` and ``embedder_model_name`` per
-        batch; the first record that has a ``model_name`` is used. Missing fields stay None.
-        """
-        path = Path(file_path)
-        record: dict[str, Any] | None = None
-        if path.suffix.lower() == ".jsonl":
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    candidate = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(candidate, dict) and candidate.get("model_name") is not None:
-                    record = candidate
-                    break
-        elif path.suffix.lower() == ".json":
-            with path.open("r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            if isinstance(payload, list):
-                candidates = payload
-            elif isinstance(payload, dict) and isinstance(payload.get("results"), list):
-                candidates = payload["results"]
-            else:
-                candidates = []
-            for candidate in candidates:
-                if isinstance(candidate, dict) and candidate.get("model_name") is not None:
-                    record = candidate
-                    break
-        if not isinstance(record, dict):
-            return {"model_name": None, "embedder_model_name": None}
-        return {
-            "model_name": record.get("model_name"),
-            "embedder_model_name": record.get("embedder_model_name"),
-        }
-
     def build_report(
         self,
         metrics: dict[str, Any],
@@ -456,9 +437,10 @@ class ModelEvaluator:
         file_path: str | Path,
         key: str | None = None,
         source: str | None = None,
+        run_id: str | None = None,
     ) -> list[Any]:
         path = Path(file_path)
-        values = self._read_label_values(path, key)
+        values = self._read_label_values(path, key, run_id=run_id)
         if source is not None:
             for index, value in enumerate(values):
                 if value is None:
@@ -467,9 +449,11 @@ class ModelEvaluator:
                     )
         return values
 
-    def _read_label_values(self, path: Path, key: str | None = None) -> list[Any]:
+    def _read_label_values(self, path: Path, key: str | None = None, run_id: str | None = None) -> list[Any]:
         if path.suffix.lower() == ".jsonl":
             records = self._read_jsonl_records(path)
+            if run_id is not None:
+                records = [record for record in records if record.get("run_id") == run_id]
             if not records:
                 return []
             field_name = key or self.label_key
@@ -479,6 +463,11 @@ class ModelEvaluator:
             with path.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
             field_name = key or self.label_key
+            if run_id is not None and isinstance(payload, list):
+                payload = [
+                    item for item in payload
+                    if isinstance(item, dict) and item.get("run_id") == run_id
+                ]
             def get_nested(item: dict, k: str) -> Any:
                 for part in k.split('.'):
                     if isinstance(item, dict):
@@ -513,6 +502,8 @@ class ModelEvaluator:
                     continue
             field_name = key or self.label_key
             if isinstance(parsed, dict):
+                if run_id is not None and parsed.get("run_id") != run_id:
+                    continue
                 values.append(parsed.get(field_name, parsed.get(self.label_key)))
             else:
                 values.append(parsed)
@@ -527,6 +518,7 @@ class ModelEvaluator:
         zero_division: float = 0.0,
         average: str = "binary",
         unclassified_file: str | Path | None = None,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare a reference file (ground truth) against another file.
 
@@ -535,14 +527,15 @@ class ModelEvaluator:
         later swapping in a different model output.
 
         When ``unclassified_file`` is given, every None label found in either file is
-        written there as ``{source, file, index, value}``.
+        written there as ``{source, file, index, value}``. When ``run_id`` is given, only the
+        comparison file is filtered to that run (the reference is ground truth and has no run).
         """
         reference_path = Path(reference_file)
         comparison_path = Path(reference_file if comparison_file is None else comparison_file)
 
         self.unclassified = []
         y_true = self._coerce_file_labels(reference_path, key=reference_key, source="reference")
-        y_pred = self._coerce_file_labels(comparison_path, key=comparison_key, source="comparison")
+        y_pred = self._coerce_file_labels(comparison_path, key=comparison_key, source="comparison", run_id=run_id)
 
         if len(y_true) != len(y_pred):
             raise ValueError(
@@ -565,6 +558,7 @@ class ModelEvaluator:
         zero_division: float = 0.0,
         average: str = "binary",
         unclassified_file: str | Path | None = None,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare a per-log reference file against a per-batch comparison file."""
         
@@ -581,7 +575,7 @@ class ModelEvaluator:
             reference_batches.append(batch_has_error)
             
         # 3. Load the comparison file (already per-batch from the SLM)
-        y_pred = self._coerce_file_labels(comparison_file, key=comparison_key, source="comparison")
+        y_pred = self._coerce_file_labels(comparison_file, key=comparison_key, source="comparison", run_id=run_id)
         
         # 4. Truncate both to match the minimum length
         processed_count = len(y_pred)
@@ -613,10 +607,13 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=None, help="If set, groups the reference file into batches of this size before comparing.")
     parser.add_argument("--none-as", choices=["negative", "unclassified"], default="negative",
                         help="How to treat None labels: as negative (binary) or as a separate third class.")
-    parser.add_argument("--report-file", default="analysis/evaluation_report.json", help="Path to write the JSON evaluation report.")
-    parser.add_argument("--unclassified-file", default="analysis/unclassified.json", help="Path to write the values that could not be classified (None labels).")
-    parser.add_argument("--model-name", default=None, help="Override the evaluated model name (default: read from the comparison file).")
-    parser.add_argument("--embedding-model-name", default=None, help="Override the embedding model name (default: read from the comparison file).")
+    parser.add_argument("--analysis-dir", default="analysis", help="Parent directory for per-model evaluation output.")
+    parser.add_argument("--report-file", default=None,
+                        help="Path to write the JSON evaluation report (default: <analysis-dir>/<model>/evaluation_report.json).")
+    parser.add_argument("--unclassified-file", default=None,
+                        help="Path to write the values that could not be classified (default: <analysis-dir>/<model>/unclassified.json).")
+    parser.add_argument("--model-name", default=None, help="Evaluated model name; also names the default output folder.")
+    parser.add_argument("--embedding-model-name", default=None, help="Embedding model name recorded in the report.")
     args = parser.parse_args()
 
     evaluator = ModelEvaluator(
@@ -626,15 +623,18 @@ if __name__ == "__main__":
         none_as=args.none_as,
     )
     
-    # metrics = evaluator.compare_files(
-    #         args.reference_file,
-    #         args.comparison_file,
-    #         reference_key=args.label_key,
-    #         comparison_key=args.label_key,
-    #     )
-    
     ref_key = args.ref_key or args.label_key
     comp_key = args.comp_key or args.label_key
+
+    # Model and embedder are stated on the command line; nothing is sniffed from the input file.
+    model_name = args.model_name
+    embedder_model_name = args.embedding_model_name
+
+    out_dir = model_evaluation_dir(args.analysis_dir, model_name)
+    report_file = args.report_file or str(out_dir / "evaluation_report.json")
+    unclassified_file = args.unclassified_file or str(out_dir / "unclassified.json")
+    if not model_name:
+        print("Warning: no --model-name given; writing to the shared eval_plots folder.")
 
     if args.batch_size:
         metrics = evaluator.compare_batches(
@@ -643,7 +643,7 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             reference_key=ref_key,
             comparison_key=comp_key,
-            unclassified_file=args.unclassified_file,
+            unclassified_file=unclassified_file,
         )
     else:
         metrics = evaluator.compare_files(
@@ -651,16 +651,14 @@ if __name__ == "__main__":
             args.comparison_file,
             reference_key=ref_key,
             comparison_key=comp_key,
-            unclassified_file=args.unclassified_file,
+            unclassified_file=unclassified_file,
         )
 
-    metadata_file = args.comparison_file or args.reference_file
-    metadata = evaluator.read_model_metadata(metadata_file) if metadata_file else {}
     evaluator.save_report(
         metrics,
-        args.report_file,
-        model_name=args.model_name or metadata.get("model_name"),
-        embedder_model_name=args.embedding_model_name or metadata.get("embedder_model_name"),
+        report_file,
+        model_name=model_name,
+        embedder_model_name=embedder_model_name,
     )
 
     print(json.dumps(metrics, indent=2, default=str))

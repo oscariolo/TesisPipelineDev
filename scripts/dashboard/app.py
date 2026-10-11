@@ -7,7 +7,11 @@ Stdlib only: no Flask/FastAPI. Run from the repository's scripts/ directory:
 
     python dashboard/app.py                      # http://127.0.0.1:8050
     python dashboard/app.py --port 9000
+    python dashboard/app.py --model Qwen-Qwen3-0.6B   # pin one model folder
     python dashboard/app.py --input analysis/log_analysis.jsonl
+
+Each model gets its own folder under the analysis dir; by default the dashboard follows the
+newest one that has output, and falls back to the legacy flat analysis/log_analysis.jsonl.
 
 Endpoints:
     /              HTML dashboard (polls /api/summary and /api/batches)
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 from collections import Counter
 from datetime import datetime, timezone
@@ -87,6 +92,47 @@ def pick_run(runs: list[dict], run_id: str | None) -> dict | None:
     return max(runs, key=lambda r: r.get("started_at") or "")
 
 
+def _sanitize_model_name(model_name: str) -> str:
+    """Mirror of log_analysis.core.naming.sanitize_model_name; keeps the dashboard stdlib-only."""
+    cleaned = model_name.strip()
+    for char in ("/", "\\", ":", "|"):
+        cleaned = cleaned.replace(char, "-")
+    cleaned = cleaned.replace(" ", "_")
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "-", cleaned)
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-._")
+    return cleaned or "unknown-model"
+
+
+def discover_output_dir(analysis_dir: Path, explicit_input: str | None = None, model: str | None = None) -> Path:
+    """Folder whose log_analysis.jsonl should be displayed.
+
+    Explicit ``--input`` wins (its parent folder), then ``--model``; otherwise the newest model
+    subfolder holding a ``log_analysis.jsonl``, falling back to the legacy flat file.
+    """
+    if explicit_input:
+        return Path(explicit_input).parent
+    if model:
+        direct = analysis_dir / model
+        if direct.is_dir():
+            return direct
+        return analysis_dir / _sanitize_model_name(model)
+
+    candidates = [path.parent for path in analysis_dir.glob("*/log_analysis.jsonl")]
+    if (analysis_dir / "log_analysis.jsonl").exists():
+        candidates.append(analysis_dir)
+    if not candidates:
+        return analysis_dir
+    return max(candidates, key=lambda folder: (folder / "log_analysis.jsonl").stat().st_mtime)
+
+
+def first_existing(*paths) -> Path | None:
+    """First path that exists, else None (the report lives under either naming scheme)."""
+    for path in paths:
+        if path is not None and Path(path).exists():
+            return Path(path)
+    return None
+
+
 def _percentile(values: list[float], fraction: float) -> float | None:
     if not values:
         return None
@@ -97,7 +143,7 @@ def _percentile(values: list[float], fraction: float) -> float | None:
     return ordered[index]
 
 
-def build_summary(records: list[dict], report: dict, unclassified: list, run: dict | None = None, runs: list[dict] | None = None) -> dict:
+def build_summary(records: list[dict], report: dict, unclassified: list, run: dict | None = None, runs: list[dict] | None = None, output_label: str | None = None) -> dict:
     runs = runs or []
     if run and run.get("run_id"):
         records = [r for r in records if r.get("run_id") == run["run_id"]]
@@ -128,6 +174,7 @@ def build_summary(records: list[dict], report: dict, unclassified: list, run: di
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "output_dir": output_label,
         "run": run,
         "progress": progress,
         "expected_batches": expected,
@@ -342,10 +389,11 @@ async function tick() {
         (ri.embedding_model_name ? "<span class='chip'>embedder: " + ri.embedding_model_name + "</span>" : "") +
         (ri.embedding_threshold === undefined ? "" : "<span class='chip'>cosine ≥ " + ri.embedding_threshold + "</span>") +
         "<span class='chip'>source: " + (ri.log_dir || ri.json_file || ri.stream_url || "–") + "</span>" +
+        "<span class='chip'>folder: " + (s.output_dir || "–") + "</span>" +
         "<span class='chip'>batches: " + t.batches + (s.expected_batches ? " / " + s.expected_batches : "") + "</span>";
     } else {
       document.getElementById("runhead").innerHTML = "<span class='muted'>no run files yet — aggregating all records</span>";
-      document.getElementById("runmeta").innerHTML = "";
+      document.getElementById("runmeta").innerHTML = "<span class='chip'>folder: " + (s.output_dir || "–") + "</span>";
       document.getElementById("runbar").style.width = "0%";
     }
     const runOpts = (s.runs || []).map(r => "<option value='" + r.run_id + "'" + (run && r.run_id === run.run_id ? " selected" : "") + ">" + (r.started_at || "") + " · " + (r.model_name || "?") + " · " + (r.status || "") + " · " + (r.batches === undefined ? 0 : r.batches) + "</option>").join("");
@@ -406,9 +454,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Pipeline observability dashboard (read-only).")
     parser.add_argument("--analysis-dir", default=str(_ANALYSIS_DIR),
                         help="Directory holding the pipeline output and run_*.json files.")
-    parser.add_argument("--input", default=None, help="Pipeline JSONL to read (default: <analysis-dir>/log_analysis.jsonl).")
-    parser.add_argument("--report", default=None, help="Evaluation report JSON (default: <analysis-dir>/eval_plots/eval_report.json).")
-    parser.add_argument("--unclassified", default=None, help="Unclassified values file (default: <analysis-dir>/unclassified.json).")
+    parser.add_argument("--model", default=None,
+                        help="Show one model's folder (default: the newest one with output).")
+    parser.add_argument("--input", default=None, help="Pipeline JSONL to read (default: <model dir>/log_analysis.jsonl).")
+    parser.add_argument("--report", default=None, help="Evaluation report JSON (default: <model dir>/eval_report.json).")
+    parser.add_argument("--unclassified", default=None, help="Unclassified values file (default: <model dir>/eval_unclassified.json).")
     parser.add_argument("--run-id", default=None, help="Show a specific run (default: the most recent run).")
     parser.add_argument("--all", action="store_true", help="Aggregate every run instead of following the latest one.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -416,19 +466,29 @@ def main() -> None:
     args = parser.parse_args()
 
     analysis_dir = Path(args.analysis_dir)
-    input_path = Path(args.input) if args.input else analysis_dir / "log_analysis.jsonl"
-    report_path = Path(args.report) if args.report else analysis_dir / "eval_plots" / "eval_report.json"
-    unclassified_path = Path(args.unclassified) if args.unclassified else analysis_dir / "unclassified.json"
+    out_dir = discover_output_dir(analysis_dir, args.input, args.model)
+    input_path = Path(args.input) if args.input else out_dir / "log_analysis.jsonl"
+    report_path = Path(args.report) if args.report else first_existing(
+        out_dir / "eval_report.json",
+        out_dir / "evaluation_report.json",
+        out_dir / "eval_plots" / "eval_report.json",
+        analysis_dir / "eval_plots" / "eval_report.json",
+    ) or (out_dir / "eval_report.json")
+    unclassified_path = Path(args.unclassified) if args.unclassified else first_existing(
+        out_dir / "eval_unclassified.json",
+        out_dir / "unclassified.json",
+        analysis_dir / "unclassified.json",
+    ) or (out_dir / "eval_unclassified.json")
 
     def select_run(run_id: str | None) -> dict | None:
         if args.all:
             return None
-        return pick_run(load_runs(analysis_dir), run_id or args.run_id)
+        return pick_run(load_runs(out_dir), run_id or args.run_id)
 
     def summary_fn(run_id: str | None = None) -> dict:
         return build_summary(
             load_records(input_path), load_json(report_path), load_list(unclassified_path),
-            select_run(run_id), load_runs(analysis_dir),
+            select_run(run_id), load_runs(out_dir), output_label=out_dir.name,
         )
 
     def batches_fn(run_id: str | None = None) -> list:

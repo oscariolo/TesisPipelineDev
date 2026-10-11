@@ -13,6 +13,7 @@ All plots are saved as PNG files. No JSON/HTML reports are produced.
 from __future__ import annotations
 
 import io
+import json
 import os
 import pathlib
 import warnings
@@ -26,7 +27,7 @@ import numpy as np
 
 # Import modelEvaluation from the same directory
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from modelEvaluation import ModelEvaluator
+from modelEvaluation import ModelEvaluator, model_evaluation_dir
 
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
@@ -241,83 +242,91 @@ def generate_report(
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point
+# Reusable evaluation entry point (also used by main.py --evaluate)
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    import argparse
-    import json
-    import pathlib as _pl
+def run_evaluation(
+    reference_file: str | pathlib.Path,
+    comparison_file: str | pathlib.Path,
+    output_dir: str | pathlib.Path,
+    *,
+    model_name: str | None = None,
+    embedder_model_name: str | None = None,
+    label_key: str = "error_found",
+    reference_key: str | None = None,
+    comparison_key: str | None = None,
+    batch_size: int | None = 100,
+    none_as: str = "negative",
+    prefix: str = "eval",
+    run_id: str | None = None,
+    confidence_file: str | pathlib.Path | None = None,
+    report_file: str | pathlib.Path | None = None,
+    unclassified_file: str | pathlib.Path | None = None,
+) -> dict[str, Any]:
+    """Evaluate a pipeline output and write its diagrams and JSON report.
 
-    # Resolve defaults relative to the scripts/ directory (one level up from this script)
-    _scripts_dir = _pl.Path(__file__).resolve().parent.parent
-    _dataset_dir = _scripts_dir / "dataset"
-    _analysis_dir = _scripts_dir / "analysis"
-
-    parser = argparse.ArgumentParser(
-        description="Evaluate an SLM log-analysis output and generate diagram reports (PNG)."
-    )
-    parser.add_argument("reference_file", nargs="?", default=str(_dataset_dir / "dataset_slm_procesado_web.json"),
-                        help="Ground-truth dataset from parse_and_label.py (default: dataset/dataset_slm_procesado_web.json)")
-    parser.add_argument("comparison_file", nargs="?", default=str(_analysis_dir / "log_analysis.jsonl"),
-                        help="Pipeline SLM output (default: analysis/log_analysis.jsonl)")
-    parser.add_argument("--output-dir", default=str(_analysis_dir / "eval_plots"),
-                        help="Directory to save PNG diagrams")
-    parser.add_argument("--label-key", default="error_found")
-    parser.add_argument("--ref-key", default="ground_truth_label.is_error",
-                        help="Label key for reference file (default: ground_truth_label.is_error for parse_and_label output)")
-    parser.add_argument("--comp-key", default="error_found",
-                        help="Label key for comparison file (default: error_found for pipeline output)")
-    parser.add_argument("--batch-size", type=int, default=100,
-                        help="Batch size for grouping ground-truth logs to match pipeline output (default: 100)")
-    parser.add_argument("--none-as", choices=["negative", "unclassified"], default="negative",
-                        help="How to treat None labels: as negative (binary) or as a separate third class.")
-    parser.add_argument("--unclassified-file", default=None,
-                        help="Path to write the values that could not be classified (default: <output-dir>/<prefix>_unclassified.json)")
-    parser.add_argument("--roc", action="store_true",
-                        help="Also require ROC data: reads a second comparison file with 'confidence' scores")
-    parser.add_argument("--confidence-file", default=None,
-                        help="JSONL file with per-batch 'confidence' float field for ROC plot")
-    parser.add_argument("--prefix", default="eval",
-                        help="Filename prefix for saved diagrams")
-    parser.add_argument("--report-file", default=None,
-                        help="Path to write the JSON evaluation report (default: <output-dir>/<prefix>_report.json)")
-    parser.add_argument("--model-name", default=None,
-                        help="Override the evaluated model name (default: read from the pipeline output)")
-    parser.add_argument("--embedding-model-name", default=None,
-                        help="Override the embedding model name (default: read from the pipeline output)")
-    args = parser.parse_args()
-
+    Everything is stated by the caller: ``output_dir`` is where the report and plots go (normally
+    the model folder the pipeline just wrote into) and ``model_name`` / ``embedder_model_name`` only
+    label the report. ``run_id`` restricts the comparison file to one pipeline run. No ROC curve is
+    produced unless a ``confidence_file`` with continuous scores is supplied. Returns ``output_dir``,
+    ``report_path``, ``unclassified_file``, ``plots`` and ``metrics``.
+    """
     evaluator = ModelEvaluator(
         positive_label=True,
         negative_label=False,
-        label_key=args.label_key,
-        none_as=args.none_as,
+        label_key=label_key,
+        none_as=none_as,
     )
 
-    ref_key = args.ref_key or args.label_key
-    comp_key = args.comp_key or args.label_key
+    ref_key = reference_key or label_key
+    comp_key = comparison_key or label_key
 
-    unclassified_path = args.unclassified_file or str(pathlib.Path(args.output_dir) / f"{args.prefix}_unclassified.json")
+    out_dir = pathlib.Path(output_dir)
 
-    # Standard metrics
-    if args.batch_size:
+    print(
+        "[evaluate] reference : {}  (key: {})\n"
+        "[evaluate] comparison: {}  (key: {}, run: {})\n"
+        "[evaluate] output    : {}\n"
+        "[evaluate] batch size: {} | none_as: {}".format(
+            pathlib.Path(reference_file).resolve(),
+            ref_key,
+            pathlib.Path(comparison_file).resolve(),
+            comp_key,
+            run_id or "all runs in the file",
+            out_dir.resolve(),
+            batch_size if batch_size else "off (one label per record)",
+            none_as,
+        )
+    )
+
+    report_path = pathlib.Path(report_file) if report_file else out_dir / f"{prefix}_report.json"
+    unclassified_path = (
+        pathlib.Path(unclassified_file) if unclassified_file else out_dir / f"{prefix}_unclassified.json"
+    )
+
+    if batch_size:
         metrics = evaluator.compare_batches(
-            args.reference_file, args.comparison_file,
-            batch_size=args.batch_size, reference_key=ref_key, comparison_key=comp_key,
-            unclassified_file=unclassified_path,
+            reference_file, comparison_file,
+            batch_size=batch_size, reference_key=ref_key, comparison_key=comp_key,
+            unclassified_file=unclassified_path, run_id=run_id,
         )
     else:
         metrics = evaluator.compare_files(
-            args.reference_file, args.comparison_file,
+            reference_file, comparison_file,
             reference_key=ref_key, comparison_key=comp_key,
-            unclassified_file=unclassified_path,
+            unclassified_file=unclassified_path, run_id=run_id,
         )
 
-    # ROC data if requested
-    if args.roc or args.confidence_file:
-        conf_path = pathlib.Path(args.confidence_file or args.comparison_file or args.reference_file)
-        y_conf = []
+    # Record the provenance so a report can be traced back to the files it came from.
+    metrics["reference_file"] = str(pathlib.Path(reference_file).resolve())
+    metrics["comparison_file"] = str(pathlib.Path(comparison_file).resolve())
+    if run_id:
+        metrics["run_id"] = run_id
+
+    # ROC data only when a continuous confidence source is available.
+    if confidence_file:
+        conf_path = pathlib.Path(confidence_file)
+        y_conf: list[float] = []
         if conf_path.suffix == ".jsonl":
             for line in conf_path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
@@ -333,24 +342,143 @@ if __name__ == "__main__":
             if isinstance(data, list):
                 y_conf = [float(r.get("confidence", r.get("error_found", 0))) for r in data if isinstance(r, dict)]
             elif isinstance(data, dict) and isinstance(data.get("results"), list):
-                y_conf = [float(r.get("confidence", r.get("error_found", 0))) for r in data["results"] if isinstance(r, dict)]
+                y_conf = [
+                    float(r.get("confidence", r.get("error_found", 0)))
+                    for r in data["results"] if isinstance(r, dict)
+                ]
 
         if y_conf:
-            ref_path = pathlib.Path(args.reference_file)
-            y_true = evaluator._coerce_file_labels(ref_path, key=ref_key)
+            y_true = evaluator._coerce_file_labels(pathlib.Path(reference_file), key=ref_key)
             metrics["roc_auc"] = evaluator.roc_auc(y_true, y_conf)
             metrics["roc_curve"] = evaluator.roc_curve_data(y_true, y_conf)
 
-    # Generate all diagrams
-    paths = generate_report(metrics, args.output_dir, prefix=args.prefix)
-    print(f"\nDone. {len(paths)} diagram(s) saved to {args.output_dir}/")
-
-    # JSON report with model + embedding metadata and positive-class (error_found) metrics
-    metadata = evaluator.read_model_metadata(args.comparison_file) if args.comparison_file else {}
-    report_path = args.report_file or str(pathlib.Path(args.output_dir) / f"{args.prefix}_report.json")
+    paths = generate_report(metrics, out_dir, prefix=prefix)
     evaluator.save_report(
         metrics,
         report_path,
-        model_name=args.model_name or metadata.get("model_name"),
-        embedder_model_name=args.embedding_model_name or metadata.get("embedder_model_name"),
+        model_name=model_name,
+        embedder_model_name=embedder_model_name,
     )
+
+    return {
+        "output_dir": str(out_dir),
+        "report_path": str(report_path),
+        "unclassified_file": str(unclassified_path),
+        "plots": [str(path) for path in paths],
+        "metrics": metrics,
+    }
+
+
+def list_model_outputs(analysis_dir: str | pathlib.Path) -> list[pathlib.Path]:
+    """Every ``<analysis_dir>/*/log_analysis.jsonl``, newest first."""
+    analysis_dir = pathlib.Path(analysis_dir)
+    return sorted(
+        analysis_dir.glob("*/log_analysis.jsonl"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def default_comparison_file(analysis_dir: str | pathlib.Path) -> str:
+    """Newest ``<analysis_dir>/*/log_analysis.jsonl``, else the legacy flat file."""
+    analysis_dir = pathlib.Path(analysis_dir)
+    candidates = list_model_outputs(analysis_dir)
+    if candidates:
+        return str(candidates[0])
+    return str(analysis_dir / "log_analysis.jsonl")
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+    import pathlib as _pl
+
+    # Resolve defaults relative to the scripts/ directory (one level up from this script)
+    _scripts_dir = _pl.Path(__file__).resolve().parent.parent
+    _dataset_dir = _scripts_dir / "dataset"
+    _analysis_dir = _scripts_dir / "analysis"
+
+    parser = argparse.ArgumentParser(
+        description="Evaluate an SLM log-analysis output and generate diagram reports (PNG)."
+    )
+    parser.add_argument("reference_file", nargs="?", default=str(_dataset_dir / "dataset_slm_procesado_web.json"),
+                        help="Ground-truth dataset from parse_and_label.py (default: dataset/dataset_slm_procesado_web.json)")
+    parser.add_argument("comparison_file", nargs="?", default=None,
+                        help="Pipeline SLM output (default: newest <analysis-dir>/<model>/log_analysis.jsonl)")
+    parser.add_argument("--analysis-dir", default=str(_analysis_dir),
+                        help="Parent directory for per-model evaluation output (default: scripts/analysis)")
+    parser.add_argument("--output-dir", default=None,
+                        help="Directory for PNG diagrams (default: <analysis-dir>/<model>/)")
+    parser.add_argument("--label-key", default="error_found")
+    parser.add_argument("--ref-key", default="ground_truth_label.is_error",
+                        help="Label key for reference file (default: ground_truth_label.is_error for parse_and_label output)")
+    parser.add_argument("--comp-key", default="error_found",
+                        help="Label key for comparison file (default: error_found for pipeline output)")
+    parser.add_argument("--batch-size", type=int, default=100,
+                        help="Batch size for grouping ground-truth logs to match pipeline output (default: 100)")
+    parser.add_argument("--none-as", choices=["negative", "unclassified"], default="negative",
+                        help="How to treat None labels: as negative (binary) or as a separate third class.")
+    parser.add_argument("--unclassified-file", default=None,
+                        help="Path to write the values that could not be classified (default: <model dir>/<prefix>_unclassified.json)")
+    parser.add_argument("--roc", action="store_true",
+                        help="Also require ROC data: reads a second comparison file with 'confidence' scores")
+    parser.add_argument("--confidence-file", default=None,
+                        help="JSONL file with per-batch 'confidence' float field for ROC plot")
+    parser.add_argument("--prefix", default="eval",
+                        help="Filename prefix for saved diagrams")
+    parser.add_argument("--report-file", default=None,
+                        help="Path to write the JSON evaluation report (default: <model dir>/<prefix>_report.json)")
+    parser.add_argument("--model-name", default=None,
+                        help="Evaluated model name; also names the default output folder (<analysis-dir>/<model>).")
+    parser.add_argument("--embedding-model-name", default=None,
+                        help="Embedding model name recorded in the report.")
+    args = parser.parse_args()
+
+    if args.comparison_file:
+        comparison_file = args.comparison_file
+    else:
+        comparison_file = default_comparison_file(args.analysis_dir)
+        print("[evaluate] no comparison_file given; using the newest pipeline output")
+
+    if not pathlib.Path(args.reference_file).exists():
+        raise SystemExit(f"[evaluate] reference file not found: {args.reference_file}")
+    if not pathlib.Path(comparison_file).exists():
+        available = [path.parent.name for path in list_model_outputs(args.analysis_dir)]
+        raise SystemExit(
+            f"[evaluate] no pipeline output at {comparison_file}\n"
+            f"[evaluate] model folders with output under {args.analysis_dir}: "
+            f"{', '.join(available) if available else 'none'}"
+        )
+
+    # Model and embedder are stated on the command line; nothing is sniffed from the output file.
+    model_name = args.model_name
+    embedder_model_name = args.embedding_model_name
+    output_dir = (
+        pathlib.Path(args.output_dir) if args.output_dir
+        else model_evaluation_dir(args.analysis_dir, model_name)
+    )
+    if not model_name:
+        print("[warn] no --model-name given; writing to the shared eval_plots folder")
+
+    result = run_evaluation(
+        reference_file=args.reference_file,
+        comparison_file=comparison_file,
+        output_dir=output_dir,
+        model_name=model_name,
+        embedder_model_name=embedder_model_name,
+        label_key=args.label_key,
+        reference_key=args.ref_key,
+        comparison_key=args.comp_key,
+        batch_size=args.batch_size,
+        none_as=args.none_as,
+        prefix=args.prefix,
+        # Only these flags can supply continuous scores; without them no ROC is drawn.
+        confidence_file=args.confidence_file or (comparison_file if args.roc else None),
+        report_file=args.report_file,
+        unclassified_file=args.unclassified_file,
+    )
+
+    print(f"\nDone. {len(result['plots'])} diagram(s) saved to {result['output_dir']}/")
