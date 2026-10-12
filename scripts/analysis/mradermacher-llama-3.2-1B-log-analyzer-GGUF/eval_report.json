@@ -4,21 +4,21 @@
   "label_key": "error_found",
   "positive_class": "error_found (label=1)",
   "averaging": "positive class only (binary); per-class + macro/weighted for 3 classes",
-  "none_as": "unclassified",
+  "none_as": "negative",
   "unclassified_count": 0,
-  "evaluated_at": "2026-10-10T19:38:04",
-  "accuracy": 0.8281718281718282,
-  "balanced_accuracy": 0.5,
+  "evaluated_at": "2026-10-12T15:16:01",
+  "accuracy": 0.942057942057942,
+  "balanced_accuracy": 0.48961578400830735,
   "precision": 0.0,
   "recall": 0.0,
   "f1_score": 0.0,
   "confusion_matrix": [
     [
-      829,
-      0
+      943,
+      20
     ],
     [
-      172,
+      38,
       0
     ]
   ],
@@ -26,18 +26,74 @@
     0,
     1
   ],
-  "matthews_corrcoef": 0.0,
-  "zero_one_loss": 0.17182817182817178,
-  "hamming_loss": 0.17182817182817184,
-  "true_negative": 829,
-  "false_positive": 0,
-  "false_negative": 172,
+  "matthews_corrcoef": -0.028363456111299524,
+  "zero_one_loss": 0.05794205794205798,
+  "hamming_loss": 0.057942057942057944,
+  "true_negative": 943,
+  "false_positive": 20,
+  "false_negative": 38,
   "true_positive": 0,
   "support": {
-    "negative": 829,
-    "positive": 172
+    "negative": 963,
+    "positive": 38
   },
   "total_samples": 1001,
-  "reference_file": "/home/oscariolodebian/Tesis/scripts/pseudo_labeling/data/ground_truth_dataset.jsonl",
-  "comparison_file": "/home/oscariolodebian/Tesis/scripts/analysis/Qwen-Qwen3-0.6B/log_analysis.jsonl"
+  "roc_auc": 0.7346491228070176,
+  "roc_curve": {
+    "fpr": [
+      0.0,
+      0.006578947368421052,
+      0.11842105263157894,
+      0.11842105263157894,
+      0.15789473684210525,
+      0.15789473684210525,
+      0.16447368421052633,
+      0.16447368421052633,
+      0.20394736842105263,
+      0.20394736842105263,
+      0.3223684210526316,
+      0.3223684210526316,
+      0.625,
+      0.625,
+      1.0
+    ],
+    "tpr": [
+      0.0,
+      0.0,
+      0.0,
+      0.16666666666666666,
+      0.16666666666666666,
+      0.3333333333333333,
+      0.3333333333333333,
+      0.5,
+      0.5,
+      0.6666666666666666,
+      0.6666666666666666,
+      0.8333333333333334,
+      0.8333333333333334,
+      1.0,
+      1.0
+    ],
+    "thresholds": [
+      Infinity,
+      0.6650010347366333,
+      0.36250096559524536,
+      0.35913363099098206,
+      0.32686665654182434,
+      0.3227406442165375,
+      0.32245638966560364,
+      0.3180353045463562,
+      0.2875286340713501,
+      0.2857357859611511,
+      0.2162180095911026,
+      0.21480946242809296,
+      0.08653884381055832,
+      0.08287504315376282,
+      0.01873241737484932
+    ]
+  },
+  "roc_samples": 158,
+  "reference_file": "/home/oscariolodebian/Tesis/scripts/dataset/dataset_slm_procesado_web.json",
+  "comparison_file": "/home/oscariolodebian/Tesis/scripts/analysis/mradermacher-llama-3.2-1B-log-analyzer-GGUF/log_analysis.jsonl",
+  "run_id": "20261012-201242"
 }

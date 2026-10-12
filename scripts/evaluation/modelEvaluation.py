@@ -227,55 +227,6 @@ class ModelEvaluator:
     def hamming_loss(self, y_true: Sequence[Any], y_pred: Sequence[Any]) -> float:
         return hamming_loss(self._normalize_labels(y_true), self._normalize_labels(y_pred))
 
-    def roc_auc(
-        self,
-        y_true: Sequence[Any],
-        y_score: Sequence[float],
-        average: str = "macro",
-        multi_class: str = "ovr",
-    ) -> float:
-        """Compute ROC AUC. Requires continuous scores (not binary labels) for y_score."""
-        true_bin = self._normalize_labels(y_true)
-        score_arr = [float(s) for s in y_score]
-        if len(set(true_bin)) < 2:
-            return 0.0
-        try:
-            return float(roc_auc_score(true_bin, score_arr, average=average, multi_class=multi_class))
-        except ValueError:
-            return 0.0
-
-    def roc_curve_data(
-        self,
-        y_true: Sequence[Any],
-        y_score: Sequence[float],
-    ) -> dict[str, list[float]]:
-        """Return ROC curve points: {fpr, tpr, thresholds}."""
-        true_bin = self._normalize_labels(y_true)
-        score_arr = [float(s) for s in y_score]
-        if len(set(true_bin)) < 2:
-            return {"fpr": [0.0, 1.0], "tpr": [0.0, 1.0], "thresholds": [1.0, 0.0]}
-        fpr, tpr, thresholds = roc_curve(true_bin, score_arr)
-        return {
-            "fpr": fpr.tolist(),
-            "tpr": tpr.tolist(),
-            "thresholds": thresholds.tolist(),
-        }
-
-    def evaluate_with_roc(
-        self,
-        y_true: Sequence[Any],
-        y_score: Sequence[float],
-        labels: Sequence[Any] | None = None,
-        zero_division: float = 0.0,
-        average: str = "binary",
-    ) -> dict[str, Any]:
-        """Full evaluation including ROC AUC. y_score must be continuous confidence scores."""
-        base = self.evaluate(y_true=y_true, y_pred=[s >= 0.5 for s in y_score],
-                             labels=labels, zero_division=zero_division, average=average)
-        base["roc_auc"] = self.roc_auc(y_true, y_score, average=average)
-        base["roc_curve"] = self.roc_curve_data(y_true, y_score)
-        return base
-
     def evaluate(
         self,
         y_true: Sequence[Any],
@@ -369,6 +320,37 @@ class ModelEvaluator:
             result["none_as"] = self.none_as
 
         return result
+
+    def _roc_metrics(self, y_true: Sequence[Any], y_score: Sequence[Any]) -> dict[str, Any]:
+        """ROC AUC + curve over the scored pairs, or ``{}`` when ROC is undefined.
+
+        Skipped when no score is present or when the ground truth has only one class — a one-class
+        ROC is not a curve, and reporting 0.0 for it would be misleading.
+        """
+        pairs: list[tuple[int, float]] = []
+        for label, score in zip(y_true, y_score):
+            try:
+                pairs.append((self._encode_label(label), float(score)))
+            except (TypeError, ValueError):
+                continue
+        if not pairs:
+            return {}
+
+        true_binary = [pair[0] for pair in pairs]
+        scores = [pair[1] for pair in pairs]
+        if len(set(true_binary)) < 2:
+            return {}
+
+        fpr, tpr, thresholds = roc_curve(true_binary, scores)
+        return {
+            "roc_auc": float(roc_auc_score(true_binary, scores)),
+            "roc_curve": {
+                "fpr": fpr.tolist(),
+                "tpr": tpr.tolist(),
+                "thresholds": thresholds.tolist(),
+            },
+            "roc_samples": len(pairs),
+        }
 
     def build_report(
         self,
@@ -519,6 +501,7 @@ class ModelEvaluator:
         average: str = "binary",
         unclassified_file: str | Path | None = None,
         run_id: str | None = None,
+        score_key: str | None = None,
     ) -> dict[str, Any]:
         """Compare a reference file (ground truth) against another file.
 
@@ -529,6 +512,8 @@ class ModelEvaluator:
         When ``unclassified_file`` is given, every None label found in either file is
         written there as ``{source, file, index, value}``. When ``run_id`` is given, only the
         comparison file is filtered to that run (the reference is ground truth and has no run).
+        When ``score_key`` is given, those per-record scores drive ROC AUC — computed on the same
+        filtering, so the curve is aligned with the confusion matrix.
         """
         reference_path = Path(reference_file)
         comparison_path = Path(reference_file if comparison_file is None else comparison_file)
@@ -544,6 +529,9 @@ class ModelEvaluator:
             )
 
         metrics = self.evaluate(y_true, y_pred, zero_division=zero_division, average=average)
+        if score_key:
+            scores = self._read_label_values(comparison_path, score_key, run_id=run_id)
+            metrics.update(self._roc_metrics(y_true, scores))
         if unclassified_file is not None:
             self.save_unclassified(unclassified_file)
         return metrics
@@ -559,6 +547,7 @@ class ModelEvaluator:
         average: str = "binary",
         unclassified_file: str | Path | None = None,
         run_id: str | None = None,
+        score_key: str | None = None,
     ) -> dict[str, Any]:
         """Compare a per-log reference file against a per-batch comparison file."""
         
@@ -588,6 +577,9 @@ class ModelEvaluator:
         
         print(f"Evaluando {min_len} batches (cada uno de {batch_size} logs)...")
         metrics = self.evaluate(y_true, y_pred, zero_division=zero_division, average=average)
+        if score_key:
+            scores = self._read_label_values(Path(comparison_file), score_key, run_id=run_id)[:min_len]
+            metrics.update(self._roc_metrics(y_true, scores))
         if unclassified_file is not None:
             self.save_unclassified(unclassified_file)
         return metrics

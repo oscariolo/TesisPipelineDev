@@ -24,14 +24,27 @@ class LogVectorStore:
         self._ensure_collection()
         self.client.load_collection(self.collection_name)
 
+    def _has_probability_field(self) -> bool:
+        fields = self.client.describe_collection(self.collection_name).get("fields", [])
+        return any(field.get("name") == "error_probability" for field in fields)
+
     def _ensure_collection(self) -> None:
         if self.client.has_collection(self.collection_name):
-            return
+            if self._has_probability_field():
+                return
+            # The stored cache predates error_probability; it is derived data, so rebuild it rather
+            # than hand back records that can never carry a score.
+            logger.warning(
+                "Collection %s has an outdated schema (no error_probability); recreating it",
+                self.collection_name,
+            )
+            self.client.drop_collection(self.collection_name)
         schema = MilvusClient.create_schema(auto_id=True)
         schema.add_field("id", DataType.INT64, is_primary=True)
         schema.add_field("vector", DataType.FLOAT_VECTOR, dim=self.dimension)
         schema.add_field("raw_text", DataType.VARCHAR, max_length=65535)
         schema.add_field("is_error", DataType.BOOL)
+        schema.add_field("error_probability", DataType.DOUBLE, nullable=True)
         schema.add_field("model_name", DataType.VARCHAR, max_length=256, nullable=True)
         schema.add_field("embedder_model_name", DataType.VARCHAR, max_length=256, nullable=True)
         index_params = self.client.prepare_index_params()
@@ -51,7 +64,7 @@ class LogVectorStore:
             collection_name=self.collection_name,
             data=[vector],
             limit=top_k,
-            output_fields=["raw_text", "is_error","model_name", "embedder_model_name"],
+            output_fields=["raw_text", "is_error", "error_probability", "model_name", "embedder_model_name"],
         )
         hits = results[0] if results else []
         return hits or None
@@ -67,7 +80,7 @@ class LogVectorStore:
             collection_name=self.collection_name,
             data=vectors,
             limit=top_k,
-            output_fields=["raw_text", "is_error", "model_name", "embedder_model_name"],
+            output_fields=["raw_text", "is_error", "error_probability", "model_name", "embedder_model_name"],
         )
         return results if results else [[] for _ in vectors]
 
@@ -78,6 +91,7 @@ class LogVectorStore:
         is_error: bool,
         model_name: Optional[str] = None,
         embedder_model_name: Optional[str] = None,
+        error_probability: Optional[float] = None,
     ) -> None:
         self.client.insert(
             self.collection_name,
@@ -86,6 +100,8 @@ class LogVectorStore:
                     "vector": vector,
                     "raw_text": raw_text,
                     "is_error": is_error,
+                    # Carry the LLM's P(error) so a later cache hit can report the same score.
+                    "error_probability": error_probability,
                     "model_name": model_name or None,
                     "embedder_model_name": embedder_model_name or None,
                 }

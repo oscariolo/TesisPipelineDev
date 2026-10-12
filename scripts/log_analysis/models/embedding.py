@@ -27,11 +27,19 @@ class EmbeddingModel(BaseModel):
     as a vector in the Milvus store, and on subsequent runs answers similar log entries
     straight from the vector store without invoking the LLM again."""
 
+    # The generative path's default device string; sentence-transformers rejects it.
+    DEVICE_ALIASES = {"gpu": "cuda"}
+
     def __init__(self, config: EmbeddingConfig):
         self.config = config
         self._encoder = None
         self._store = None
         self._fallback = GenerativeModel(config.generative)
+
+    def _encoder_device(self) -> str:
+        """Torch device string for the encoder (``main.py`` shares ``--hf-device`` with the LLM)."""
+        device = self.config.hf_device or "cpu"
+        return self.DEVICE_ALIASES.get(device.lower(), device)
 
     def _load_encoder(self):
         from sentence_transformers import SentenceTransformer
@@ -39,9 +47,9 @@ class EmbeddingModel(BaseModel):
         logger.info(
             "Loading sentence embedding model %s on %s",
             self.config.embedding_model_name,
-            self.config.hf_device,
+            self._encoder_device(),
         )
-        kwargs = {"device": self.config.hf_device}
+        kwargs = {"device": self._encoder_device()}
         if self.config.token:
             kwargs["token"] = self.config.token
         self._encoder = SentenceTransformer(self.config.embedding_model_name, **kwargs)
@@ -90,6 +98,8 @@ class EmbeddingModel(BaseModel):
             return BatchAnalysisResult(
                 batch_id=batch.batch_id,
                 error_found=bool(entity.get("is_error", False)),
+                # The score belongs to the entry this batch matched, not to a fresh model call.
+                error_probability=entity.get("error_probability"),
                 model_name=entity.get("model_name", None),
                 embedder_model_name=entity.get("embedder_model_name", None),
                 is_valid_response=True, #if it was gotte from embedding store its assumed valid
@@ -108,7 +118,8 @@ class EmbeddingModel(BaseModel):
                 batch_text,
                 fallback_result.error_found,
                 embedder_model_name=fallback_result.embedder_model_name,
-                model_name=fallback_result.model_name
+                model_name=fallback_result.model_name,
+                error_probability=fallback_result.error_probability,
             )
 
         return fallback_result

@@ -13,7 +13,6 @@ All plots are saved as PNG files. No JSON/HTML reports are produced.
 from __future__ import annotations
 
 import io
-import json
 import os
 import pathlib
 import warnings
@@ -259,7 +258,7 @@ def run_evaluation(
     none_as: str = "negative",
     prefix: str = "eval",
     run_id: str | None = None,
-    confidence_file: str | pathlib.Path | None = None,
+    score_key: str | None = "error_probability",
     report_file: str | pathlib.Path | None = None,
     unclassified_file: str | pathlib.Path | None = None,
 ) -> dict[str, Any]:
@@ -267,9 +266,10 @@ def run_evaluation(
 
     Everything is stated by the caller: ``output_dir`` is where the report and plots go (normally
     the model folder the pipeline just wrote into) and ``model_name`` / ``embedder_model_name`` only
-    label the report. ``run_id`` restricts the comparison file to one pipeline run. No ROC curve is
-    produced unless a ``confidence_file`` with continuous scores is supplied. Returns ``output_dir``,
-    ``report_path``, ``unclassified_file``, ``plots`` and ``metrics``.
+    label the report. ``run_id`` restricts the comparison file to one pipeline run. ``score_key``
+    names the per-record score used for ROC AUC (default ``error_probability``, i.e. the model's own
+    P(error) from its logits); ROC is skipped when no scores or a single class are present. Returns
+    ``output_dir``, ``report_path``, ``unclassified_file``, ``plots`` and ``metrics``.
     """
     evaluator = ModelEvaluator(
         positive_label=True,
@@ -308,13 +308,13 @@ def run_evaluation(
         metrics = evaluator.compare_batches(
             reference_file, comparison_file,
             batch_size=batch_size, reference_key=ref_key, comparison_key=comp_key,
-            unclassified_file=unclassified_path, run_id=run_id,
+            unclassified_file=unclassified_path, run_id=run_id, score_key=score_key,
         )
     else:
         metrics = evaluator.compare_files(
             reference_file, comparison_file,
             reference_key=ref_key, comparison_key=comp_key,
-            unclassified_file=unclassified_path, run_id=run_id,
+            unclassified_file=unclassified_path, run_id=run_id, score_key=score_key,
         )
 
     # Record the provenance so a report can be traced back to the files it came from.
@@ -322,35 +322,6 @@ def run_evaluation(
     metrics["comparison_file"] = str(pathlib.Path(comparison_file).resolve())
     if run_id:
         metrics["run_id"] = run_id
-
-    # ROC data only when a continuous confidence source is available.
-    if confidence_file:
-        conf_path = pathlib.Path(confidence_file)
-        y_conf: list[float] = []
-        if conf_path.suffix == ".jsonl":
-            for line in conf_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    rec = json.loads(line)
-                    y_conf.append(float(rec.get("confidence", rec.get("error_found", 0))))
-                except (json.JSONDecodeError, ValueError, KeyError):
-                    continue
-        elif conf_path.suffix == ".json":
-            with conf_path.open(encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                y_conf = [float(r.get("confidence", r.get("error_found", 0))) for r in data if isinstance(r, dict)]
-            elif isinstance(data, dict) and isinstance(data.get("results"), list):
-                y_conf = [
-                    float(r.get("confidence", r.get("error_found", 0)))
-                    for r in data["results"] if isinstance(r, dict)
-                ]
-
-        if y_conf:
-            y_true = evaluator._coerce_file_labels(pathlib.Path(reference_file), key=ref_key)
-            metrics["roc_auc"] = evaluator.roc_auc(y_true, y_conf)
-            metrics["roc_curve"] = evaluator.roc_curve_data(y_true, y_conf)
 
     paths = generate_report(metrics, out_dir, prefix=prefix)
     evaluator.save_report(
@@ -423,10 +394,8 @@ if __name__ == "__main__":
                         help="How to treat None labels: as negative (binary) or as a separate third class.")
     parser.add_argument("--unclassified-file", default=None,
                         help="Path to write the values that could not be classified (default: <model dir>/<prefix>_unclassified.json)")
-    parser.add_argument("--roc", action="store_true",
-                        help="Also require ROC data: reads a second comparison file with 'confidence' scores")
-    parser.add_argument("--confidence-file", default=None,
-                        help="JSONL file with per-batch 'confidence' float field for ROC plot")
+    parser.add_argument("--score-key", default="error_probability",
+                        help="Per-record score used for ROC AUC (default: error_probability).")
     parser.add_argument("--prefix", default="eval",
                         help="Filename prefix for saved diagrams")
     parser.add_argument("--report-file", default=None,
@@ -475,8 +444,7 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         none_as=args.none_as,
         prefix=args.prefix,
-        # Only these flags can supply continuous scores; without them no ROC is drawn.
-        confidence_file=args.confidence_file or (comparison_file if args.roc else None),
+        score_key=args.score_key,
         report_file=args.report_file,
         unclassified_file=args.unclassified_file,
     )

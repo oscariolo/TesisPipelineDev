@@ -21,7 +21,8 @@ class AnalysisResult(BaseModel):
 
 class BatchAnalysisResult(BaseModel):
     batch_id: int
-    error_found: Optional[bool] = False
+    error_found: bool = False
+    error_probability: Optional[float] = None  # P(error=True) from the logits at the boolean token
     model_name: Optional[str] = None
     embedder_model_name: Optional[str] = None
     token_usage: Optional[int] = None
@@ -52,6 +53,7 @@ class BatchAnalysisResult(BaseModel):
             "batch_id": self.batch_id,
             "timestamp": self.timestamp,
             "error_found": self.error_found,
+            "error_probability": self.error_probability,
             "model_name": self.model_name,
             "embedder_model_name": self.embedder_model_name,
             "token_usage": self.token_usage,

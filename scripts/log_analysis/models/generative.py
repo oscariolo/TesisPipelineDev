@@ -10,6 +10,7 @@ from pydantic import BaseModel as PydanticBaseModel
 from log_analysis.core.log_entry import LogBatch, BatchAnalysisResult
 from log_analysis.models.base import BaseModel
 import ollama
+import torch
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -38,6 +39,64 @@ CODE_FENCE_RE = re.compile(r"```[A-Za-z0-9_-]*")
 # Thinking mode needs a much larger completion budget than a single JSON object.
 THINKING_MIN_NEW_TOKENS = 1024
 
+# Forms the JSON boolean can take; only single-token spellings are usable as decision logits.
+TRUE_FORMS = (" true", "true", " True", "TRUE")
+FALSE_FORMS = (" false", "false", " False", "FALSE")
+
+
+def _resolve_boolean_token_ids(tokenizer) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Single-token ids that can spell ``true`` / ``false`` in this tokenizer's vocabulary.
+
+    A tokenizer that cannot be interrogated yields empty tuples, which makes the caller report an
+    unknown score instead of failing the batch.
+    """
+    def single_token_ids(forms: tuple[str, ...]) -> tuple[int, ...]:
+        encoder = getattr(tokenizer, "encode", None)
+        if encoder is None:
+            return ()
+        ids = []
+        for form in forms:
+            encoded = encoder(form, add_special_tokens=False)
+            if len(encoded) == 1:
+                ids.append(encoded[0])
+        return tuple(sorted(set(ids)))
+
+    return single_token_ids(TRUE_FORMS), single_token_ids(FALSE_FORMS)
+
+
+def _logits_tensor(row) -> torch.Tensor:
+    """A decoding step's logits as a float32 tensor (an existing float32 tensor is passed through)."""
+    if isinstance(row, torch.Tensor):
+        return row if row.dtype is torch.float32 else row.to(torch.float32)
+    return torch.as_tensor(row, dtype=torch.float32)
+
+
+def _step_row(step) -> torch.Tensor:
+    """One decoding step's logits as a flat row (generate emits ``[batch, vocab]``)."""
+    row = _logits_tensor(step)
+    return row[0] if row.dim() > 1 else row
+
+
+def _group_is_usable(row, ids: tuple[int, ...]) -> bool:
+    """Whether a token group survived the logits warpers (``generate`` masks the rest with -inf)."""
+    return bool(torch.isfinite(_logits_tensor(row)[list(ids)]).any())
+
+
+def _two_way_probability(logits_row, true_ids: tuple[int, ...], false_ids: tuple[int, ...]) -> float:
+    """P(true) / (P(true) + P(false)) at one decoding step, from that step's raw logits.
+
+    The group logits are reduced with ``torch.logsumexp`` and normalised with ``torch.softmax`` so
+    multi-token spellings of the same boolean sum their probability mass.
+    """
+    logits = _logits_tensor(logits_row)
+    group_logits = torch.stack(
+        [
+            torch.logsumexp(logits[list(true_ids)], dim=-1),
+            torch.logsumexp(logits[list(false_ids)], dim=-1),
+        ]
+    )
+    return float(torch.softmax(group_logits, dim=-1)[0])
+
 
 def _strip_reasoning(text: str) -> str:
     """Drop reasoning blocks and markdown fences so only the JSON answer is left."""
@@ -52,11 +111,10 @@ def _strip_reasoning(text: str) -> str:
 def getMaxVramAvailable() -> int:
     """Returns the maximum VRAM available on the current device in bytes."""
     try:
-        import torch
         if torch.cuda.is_available():
             return torch.cuda.get_device_properties(0).total_memory
-    except ImportError:
-        logger.warning("PyTorch not installed, cannot determine VRAM.")
+    except Exception:
+        logger.warning("Could not query the device, cannot determine VRAM.")
     return 0
 
 
@@ -84,6 +142,8 @@ class GenerativeModel(BaseModel):
         self._tokenizer = None
         self._messages = []  # For chat history if applies
         self._token_usage = 0
+        self._true_ids: tuple[int, ...] | None = None
+        self._false_ids: tuple[int, ...] | None = None
         self._context_window = config.contextWindow
         self.instanceModelClient()
         # Resolve the window after the client exists so the HF backend can read the model config.
@@ -137,7 +197,84 @@ class GenerativeModel(BaseModel):
             offload_folder="./offloading",
         )
 
-    def _call_hf(self, batch_size: int = 0) -> tuple[str, int]:
+    def _boolean_ids(self) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """Token ids usable as the true/false decision, resolved from the tokenizer once."""
+        if self._true_ids is None or self._false_ids is None:
+            self._true_ids, self._false_ids = _resolve_boolean_token_ids(self._tokenizer)
+        return self._true_ids, self._false_ids
+
+    def _decision_index(self, generated_ids: list[int]) -> int | None:
+        """Position of the token that spells the answer boolean, or ``None`` if there is none.
+
+        Walks the generated tokens keeping track of whether the ``is_error`` key has been seen, and
+        takes the first boolean token after it — falling back to the first boolean token at all, which
+        is what a model that answers without the key gives us.
+        """
+        true_ids, false_ids = self._boolean_ids()
+        if not true_ids or not false_ids:
+            return None
+
+        decoded_so_far = ""
+        seen_key = False
+        fallback = None
+        for index, token_id in enumerate(generated_ids):
+            decoded_so_far += self._tokenizer.decode([token_id])
+            if token_id in true_ids or token_id in false_ids:
+                if seen_key:
+                    return index
+                if fallback is None:
+                    fallback = index
+            if not seen_key and "is_error" in decoded_so_far:
+                seen_key = True
+
+        return fallback
+
+    def _raw_logits_at(self, sequences, position: int):
+        """Raw (unmasked) logits for ``position``, via one extra forward pass.
+
+        ``generate(output_scores=True)`` records the logits *after* the logits warpers, which the
+        model's generation config fills with -inf (Qwen3 ships ``temperature=0.6, top_k=20,
+        top_p=0.95``), destroying half the comparison. Re-running the prefix once recovers the real
+        distribution without touching how the text itself was generated.
+        """
+        try:
+            with torch.no_grad():
+                outputs = self._model(sequences[:, :position])
+        except Exception:  # a scoring failure must never fail the batch
+            logger.warning("Could not read raw decision logits; leaving error_probability empty")
+            return None
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+        return logits[0, -1]
+
+    def _decision_probability(self, scores, generated_ids: list[int], sequences=None,
+                              prompt_length: int = 0) -> float | None:
+        """P(error=True) at the token that spells the JSON boolean.
+
+        Prefers the recorded per-step scores; when the warpers masked a whole token group there, the
+        prefix is re-forwarded once for the raw logits. Returns ``None`` when the batch produced no
+        boolean token or no usable logits.
+        """
+        true_ids, false_ids = self._boolean_ids()
+        if not true_ids or not false_ids:
+            return None
+
+        index = self._decision_index(generated_ids)
+        if index is None:
+            return None
+
+        if scores is not None and index < len(scores):
+            row = _step_row(scores[index])
+            if _group_is_usable(row, true_ids) and _group_is_usable(row, false_ids):
+                return _two_way_probability(row, true_ids, false_ids)
+
+        if sequences is None or prompt_length == 0:
+            return None
+        row = self._raw_logits_at(sequences, prompt_length + index)
+        if row is None or not _group_is_usable(row, true_ids) or not _group_is_usable(row, false_ids):
+            return None
+        return _two_way_probability(row, true_ids, false_ids)
+
+    def _call_hf(self, batch_size: int = 0) -> tuple[str, int, float | None]:
         if getattr(self._tokenizer, "chat_template", None):
             template_kwargs = {
                 "tokenize": True,
@@ -174,16 +311,26 @@ class GenerativeModel(BaseModel):
             )
             max_new_tokens = THINKING_MIN_NEW_TOKENS
         gen_kwargs = {"max_new_tokens": max_new_tokens}
-        outputs = self._model.generate(**inputs, **gen_kwargs)
+        # output_scores gives the per-step logits we need for the true/false decision probability.
+        outputs = self._model.generate(
+            **inputs,
+            output_scores=True,
+            return_dict_in_generate=True,
+            **gen_kwargs,
+        )
+        sequences = getattr(outputs, "sequences", outputs)
         prompt_length = inputs["input_ids"].shape[-1]
-        generated_length = outputs[0].shape[-1] - prompt_length
-        text = self._tokenizer.decode(
-            outputs[0][prompt_length:],
-            skip_special_tokens=True,
-        ).strip()
-        return text, prompt_length + generated_length
+        generated = sequences[0][prompt_length:]
+        text = self._tokenizer.decode(generated, skip_special_tokens=True).strip()
+        error_probability = self._decision_probability(
+            getattr(outputs, "scores", None),
+            generated.tolist(),
+            sequences=sequences,
+            prompt_length=prompt_length,
+        )
+        return text, prompt_length + len(generated), error_probability
 
-    def _call_ollama(self) -> tuple[str, int]:
+    def _call_ollama(self) -> tuple[str, int, None]:
         response = self._model.chat(
             model=self.config.model_name,
             messages=self._messages,
@@ -193,7 +340,8 @@ class GenerativeModel(BaseModel):
             }
         )
         token_usage = response.get("prompt_eval_count", 0) + response.get("eval_count", 0)
-        return response["message"]["content"].strip(), token_usage
+        # Ollama exposes no comparable logits, so this backend leaves the score unknown.
+        return response["message"]["content"].strip(), token_usage, None
 
     def _parse_response(self, text: str) -> dict:
         text = _strip_reasoning(text)
@@ -249,9 +397,9 @@ class GenerativeModel(BaseModel):
         start = time.perf_counter()
 
         if self.config.backend == "ollama":
-            raw_output, self._token_usage = self._call_ollama()
+            raw_output, self._token_usage, error_probability = self._call_ollama()
         else:
-            raw_output, self._token_usage = self._call_hf()
+            raw_output, self._token_usage, error_probability = self._call_hf()
 
 
         elapsed = time.perf_counter() - start
@@ -280,6 +428,7 @@ class GenerativeModel(BaseModel):
         return BatchAnalysisResult(
             batch_id=batch.batch_id,
             error_found=error_found,
+            error_probability=error_probability,
             model_name=self.config.model_name if hasattr(self.config, "model_name") else None,
             token_usage=self._token_usage,
             is_valid_response=is_valid_response,

@@ -65,9 +65,9 @@ docker compose up                    # CPU, no GPU
 
 ## Tests
 
-- Runnable unittest suites (run from `scripts/`, 32 tests total): `test_generative_response` (11),
-  `evaluation.test_model_evaluation` (12), `test_naming` (5), `test_evaluation_runner` (2) and
-  `test_pipeline_telemetry` (2) — e.g. `python -m unittest test_naming`.
+- Runnable unittest suites (run from `scripts/`, 49 tests total): `test_generative_response` (19),
+  `evaluation.test_model_evaluation` (15), `test_embedding_probability` (6), `test_naming` (5),
+  `test_evaluation_runner` (2) and `test_pipeline_telemetry` (2) — e.g. `python -m unittest test_naming`.
 - `test_batch_processing.py` is pytest-style (`monkeypatch`, `tmp_path`) but **pytest is not
   installed** in the venv — it silently does nothing under unittest. Install it (`pip install
   pytest`) before running; do not add it to `requierements.txt` casually.
@@ -82,33 +82,51 @@ docker compose up                    # CPU, no GPU
 - Data structures are **Pydantic v2** models; configs are pydantic `*Config` classes.
 - Every CLI is a plain `argparse` `main()` guarded by `if __name__ == "__main__":`.
 - Output is one folder per model: `analysis/<model>/log_analysis.jsonl` (one `BatchAnalysisResult`
-  per line — `error_found`, `is_valid_response`, `raw_response`, plus telemetry: `run_id`,
+  per line — `error_found`, `error_probability` (P(error) from the logits at the boolean token, HF
+  backend only), `is_valid_response`, `raw_response`, plus telemetry: `run_id`,
   `elapsed_seconds`, `entry_count`, `source_files`, `embedding_hit`, `similarity`,
   `error_description`), the matching `log_analysis.json`, and `run_<run_id>.json` (status, config,
   totals) which the dashboard reads. `--analysis-dir` / `--output-dir` set the parent; the `<model>`
   folder is always appended.
 - Log an LLM failure and continue; a bad batch must never crash the pipeline. Model JSON output is
   parsed leniently (regex for `{`, brace/paren fixups) — keep that tolerance when editing.
+- Use library primitives instead of hand-rolled math: `torch.logsumexp` / `torch.softmax` for
+  probability reductions, scikit-learn for metrics.
 
 ## Pitfalls
 
-- `--hf-device` is largely informational: models load with `device_map="auto"` and spill to a
-  `./offloading` folder when VRAM is short. Its `main.py` default is `"gpu"`, while `launch.json`
-  uses `cuda:0`.
+- `--hf-device` is largely informational for the LLM: models load with `device_map="auto"` and spill
+  to a `./offloading` folder when VRAM is short. Its `main.py` default is `"gpu"`, while `launch.json`
+  uses `cuda:0`. In embedding mode the same value goes to `SentenceTransformer(device=...)`, which
+  rejects `"gpu"` outright — every batch then fails as an invalid response in ~3s — so the model
+  maps `gpu` -> `cuda`.
 - Qwen3 HF models default to reasoning mode in their chat template. Thinking is off here by default
   (`--thinking` enables it); the switch only works through `apply_chat_template(enable_thinking=...)`,
   and enabling it auto-raises `--max-new-tokens` to 1024 because reasoning otherwise eats the budget
   and truncates the JSON answer.
 - `EmbeddingConfig` hardcodes `clearCollectionAtStartup=True` in `main.py` — the Milvus Lite
   collection is wiped every run.
-- Generated artifacts, do not hand-edit: `analysis/*`, `embeddings/log_embeddings.db` (Milvus Lite),
-  `fine_tuned_model/checkpoint-*`, `dataset/dataset_slm_procesado_web.json`.
+- Generated artifacts, do not hand-edit: `analysis/*`, `embeddings/log_embeddings.db` (Milvus Lite —
+  its `log_embeddings` collection carries `error_probability`, and a cache written before that field
+  existed is dropped and rebuilt on startup), `fine_tuned_model/checkpoint-*`,
+  `dataset/dataset_slm_procesado_web.json`.
 - `pseudo_labeling/` runs in order (1 preprocess, 2 batch_runner, 3 consensus). Stage 2 needs three
   Ollama models pulled — `qwen2.5:7b`, `llama3.1:8b`, `mistral:7b` — and stage 3 needs **pandas**,
   which is installed in the venv but not pinned in `scripts/requierements.txt`.
 - Pipeline output and its evaluation live together in `analysis/<model>/`; `python main.py --evaluate`
   fills the report and plots for that run only (scoped by `run_id`). In streaming mode the run never
   ends on its own, so the evaluation fires on Ctrl-C or `--max-batches`.
+- `error_probability` is only produced by the HF backend: it needs `generate(output_scores=True)`,
+  so Ollama records `None`. In embedding mode a cache hit has no LLM call of its own and inherits the
+  score stored with the entry it matched (`None` only for entries cached before that field existed),
+  which is what keeps ROC from silently covering just the uncached batches. Those
+  scores are **post-warper**: Qwen3's generation config (`do_sample=True, temperature=0.6, top_k=20,
+  top_p=0.95`) masks most of the vocab with `-inf` (measured: 2 finite entries of 151936 at one step),
+  so when a whole true/false group is masked the model re-forwards the prefix once for raw logits —
+  one extra forward pass per batch. That same config means generation is **sampled**, so identical
+  inputs do not reproduce identical outputs. The reference dataset is extremely imbalanced (39 errors
+  in 10001 logs, first at index 362), so a short run usually has one class only and ROC is skipped by
+  design rather than reported as 0.0.
 - `.vscode/launch.json` is stale: its "Builder log dataset" config points at
   `scripts/log_analysis/dataset/builder.py`, which does not exist — the builder lives at
   `scripts/dataBuilder/builder.py`.

@@ -54,6 +54,18 @@
       "auto_id": false,
       "default_value": null,
       "dim": null,
+      "dtype": "double",
+      "element_type": null,
+      "is_primary": false,
+      "max_capacity": null,
+      "max_length": null,
+      "name": "error_probability",
+      "nullable": true
+    },
+    {
+      "auto_id": false,
+      "default_value": null,
+      "dim": null,
       "dtype": "varchar",
       "element_type": null,
       "is_primary": false,

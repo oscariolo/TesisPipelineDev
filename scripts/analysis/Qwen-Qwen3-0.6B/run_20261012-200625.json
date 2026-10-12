@@ -1,0 +1,39 @@
+{
+  "run_id": "20261012-200625",
+  "status": "running",
+  "started_at": "2026-10-12T20:06:25+00:00",
+  "updated_at": "2026-10-12T20:06:25+00:00",
+  "run_info": {
+    "mode": "embedding",
+    "backend": "huggingface",
+    "model_name": "Qwen/Qwen3-0.6B",
+    "batch_size": 10,
+    "ollama_host": "localhost:11434",
+    "hf_device": "cuda:0",
+    "keep_history": "perPrompt",
+    "thinking": false,
+    "max_new_tokens": 512,
+    "log_dir": "logs",
+    "json_file": null,
+    "stream_url": null,
+    "output_dir": "analysis/Qwen-Qwen3-0.6B",
+    "masking": {
+      "ips": false,
+      "uuids": false,
+      "numbers": false
+    },
+    "expected_batches": 1001,
+    "embedding_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_db": "./embeddings/log_embeddings.db",
+    "embedding_threshold": 0.8
+  },
+  "totals": {
+    "batches": 0,
+    "entries": 0,
+    "errors": 0,
+    "invalid": 0,
+    "embedding_hits": 0,
+    "embedding_misses": 0,
+    "elapsed_seconds": 0.0
+  }
+}

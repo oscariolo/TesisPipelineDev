@@ -91,6 +91,8 @@ def main() -> None:
                         help="Batch size for grouping the ground truth in --evaluate (default: --batch-size).")
     parser.add_argument("--eval-none-as", choices=["negative", "unclassified"], default="negative",
                         help="How --evaluate treats None labels (default: negative).")
+    parser.add_argument("--eval-score-key", default="error_probability",
+                        help="Per-record score for ROC AUC (default: error_probability).")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--max-batches", type=int, default=None, help="Maximum number of batches to process")
     parser.add_argument("--stream-url", default=None, help="Read logs as a stream from this service URL instead of a file")
@@ -210,6 +212,7 @@ def _evaluate_run(args, output_dir: Path, run_id: str) -> None:
             reference_key=args.eval_ref_key,
             comparison_key=args.eval_comp_key,
             none_as=args.eval_none_as,
+            score_key=args.eval_score_key,
             model_name=args.model_name,
             embedder_model_name=args.embedding_model_name if args.mode == "embedding" else None,
             run_id=run_id,

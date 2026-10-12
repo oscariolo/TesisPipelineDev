@@ -176,6 +176,84 @@ class ModelEvaluatorTest(unittest.TestCase):
             self.assertEqual(metrics["total_samples"], 2)
 
 
+def _write_scored_files(root: Path) -> tuple[Path, Path]:
+    """Reference/comparison pair carrying error_probability scores (2 errors, 2 normals in run A)."""
+    reference = root / "reference.jsonl"
+    comparison = root / "comparison.jsonl"
+    reference.write_text(
+        "\n".join(json.dumps(row) for row in [
+            {"error_found": True}, {"error_found": False}, {"error_found": True}, {"error_found": False},
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    comparison.write_text(
+        "\n".join(json.dumps(row) for row in [
+            {"run_id": "A", "error_found": True, "error_probability": 0.9},
+            {"run_id": "A", "error_found": False, "error_probability": 0.1},
+            {"run_id": "A", "error_found": True, "error_probability": 0.8},
+            {"run_id": "A", "error_found": False, "error_probability": 0.2},
+            {"run_id": "B", "error_found": True, "error_probability": 0.99},
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    return reference, comparison
+
+
+class RocFromScoreTest(unittest.TestCase):
+    def test_score_key_drives_the_roc(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference, comparison = _write_scored_files(Path(temp_dir))
+            metrics = ModelEvaluator(label_key="error_found").compare_files(
+                reference, comparison, run_id="A", score_key="error_probability"
+            )
+
+            self.assertEqual(metrics["total_samples"], 4)
+            self.assertEqual(metrics["roc_samples"], 4)
+            self.assertEqual(metrics["roc_auc"], 1.0)
+            self.assertIn("roc_curve", metrics)
+
+    def test_scores_need_the_same_filtering_as_the_labels(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference, comparison = _write_scored_files(Path(temp_dir))
+            # The run-B record has no reference row, so scoring the whole file must be refused
+            # rather than silently pairing scores with the wrong labels.
+            with self.assertRaises(ValueError):
+                ModelEvaluator(label_key="error_found").compare_files(
+                    reference, comparison, score_key="error_probability"
+                )
+
+    def test_roc_is_skipped_when_the_truth_has_one_class(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference = Path(temp_dir) / "reference.jsonl"
+            comparison = Path(temp_dir) / "comparison.jsonl"
+            reference.write_text(
+                json.dumps({"error_found": False}) + "\n" + json.dumps({"error_found": False}) + "\n",
+                encoding="utf-8",
+            )
+            comparison.write_text(
+                json.dumps({"error_found": False, "error_probability": 0.4}) + "\n"
+                + json.dumps({"error_found": False, "error_probability": 0.6}) + "\n",
+                encoding="utf-8",
+            )
+
+            metrics = ModelEvaluator(label_key="error_found").compare_files(
+                reference, comparison, score_key="error_probability"
+            )
+
+            self.assertNotIn("roc_auc", metrics)
+            self.assertNotIn("roc_curve", metrics)
+            self.assertEqual(metrics["total_samples"], 2)
+
+    def test_no_score_key_means_no_roc(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference, comparison = _write_scored_files(Path(temp_dir))
+            metrics = ModelEvaluator(label_key="error_found").compare_files(
+                reference, comparison, run_id="A"
+            )
+
+            self.assertNotIn("roc_auc", metrics)
+
+
 class ModelOutputFolderTest(unittest.TestCase):
     def test_repo_id_becomes_a_single_folder_name(self):
         self.assertEqual(
