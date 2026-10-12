@@ -73,6 +73,8 @@ def main() -> None:
     parser.add_argument("--embedding-model-name", default="sentence-transformers/all-MiniLM-L6-v2", help="Sentence embedding model for embedding mode")
     parser.add_argument("--embedding-db", default="./embeddings/log_embeddings.db", help="Milvus Lite .db file storing classified log embeddings")
     parser.add_argument("--embedding-threshold", type=float, default=0.8, help="Minimum cosine similarity to reuse a stored classification")
+    parser.add_argument("--ignore-embedding-cache", dest="use_embedding_cache", action="store_false",
+                        help="Still query the Milvus cache and keep saving to it, but always take the LLM's own answer.")
     parser.add_argument("--json-file", default=None, help="Path to a JSON file containing parsed logs to ingest")
     parser.add_argument("--log-dir", type=Path, default="./logs")
     parser.add_argument("--analysis-dir", type=Path, default=Path("./analysis"),
@@ -81,10 +83,10 @@ def main() -> None:
                         help="Alias for --analysis-dir; the per-model folder is always appended.")
     parser.add_argument("--evaluate", action="store_true",
                         help="Run the evaluation once the pipeline stops (default: off).")
-    parser.add_argument("--eval-reference", default="dataset/dataset_slm_procesado_web.json",
+    parser.add_argument("--eval-reference", default="pseudo_labeling/data/ground_truth_dataset.jsonl",
                         help="Ground-truth file compared against by --evaluate.")
-    parser.add_argument("--eval-ref-key", default="ground_truth_label.is_error",
-                        help="Label key inside --eval-reference (default: ground_truth_label.is_error).")
+    parser.add_argument("--eval-ref-key", default="consensus_is_error",
+                        help="Label key inside --eval-reference (default: consensus_is_error, the pseudo-labeling 0/1 vote).")
     parser.add_argument("--eval-comp-key", default="error_found",
                         help="Prediction key inside the pipeline output (default: error_found).")
     parser.add_argument("--eval-batch-size", type=int, default=None,
@@ -108,6 +110,7 @@ def main() -> None:
     parser.add_argument("--mask-ips", action="store_true", help="Mask IP addresses in logs")
     parser.add_argument("--mask-uuids", action="store_true", help="Mask UUIDs in logs")
     parser.add_argument("--mask-numbers", action="store_true", help="Mask numbers in logs")
+    parser.add_argument("--testingMode", "-testingMode", action="store_true", help="Enable testing mode (for development only)")
     args = parser.parse_args()
 
     masker = None
@@ -156,8 +159,9 @@ def main() -> None:
             embedding_model_name=args.embedding_model_name,
             db_path=args.embedding_db,
             similarity_threshold=args.embedding_threshold,
+            use_embedding_cache=args.use_embedding_cache,
             hf_device=args.hf_device,
-            clearCollectionAtStartup=True,  # Set to True if you want to clear the Milvus collection on startup (testing only)
+            clearCollectionAtStartup=args.testingMode, 
         )
         model = EmbeddingModel(config)
 
@@ -183,6 +187,7 @@ def main() -> None:
             "embedding_model_name": args.embedding_model_name,
             "embedding_db": args.embedding_db,
             "embedding_threshold": args.embedding_threshold,
+            "embedding_cache": args.use_embedding_cache,
         })
     pipeline = Pipeline(model, ingestor, writer, max_batches=args.max_batches, run_info=run_info)
     try:

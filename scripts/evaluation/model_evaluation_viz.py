@@ -369,14 +369,14 @@ if __name__ == "__main__":
 
     # Resolve defaults relative to the scripts/ directory (one level up from this script)
     _scripts_dir = _pl.Path(__file__).resolve().parent.parent
-    _dataset_dir = _scripts_dir / "dataset"
+    _ground_truth_file = _scripts_dir / "pseudo_labeling" / "data" / "ground_truth_dataset.jsonl"
     _analysis_dir = _scripts_dir / "analysis"
 
     parser = argparse.ArgumentParser(
         description="Evaluate an SLM log-analysis output and generate diagram reports (PNG)."
     )
-    parser.add_argument("reference_file", nargs="?", default=str(_dataset_dir / "dataset_slm_procesado_web.json"),
-                        help="Ground-truth dataset from parse_and_label.py (default: dataset/dataset_slm_procesado_web.json)")
+    parser.add_argument("reference_file", nargs="?", default=str(_ground_truth_file),
+                        help="Ground truth, per log (default: pseudo_labeling/data/ground_truth_dataset.jsonl)")
     parser.add_argument("comparison_file", nargs="?", default=None,
                         help="Pipeline SLM output (default: newest <analysis-dir>/<model>/log_analysis.jsonl)")
     parser.add_argument("--analysis-dir", default=str(_analysis_dir),
@@ -384,8 +384,8 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", default=None,
                         help="Directory for PNG diagrams (default: <analysis-dir>/<model>/)")
     parser.add_argument("--label-key", default="error_found")
-    parser.add_argument("--ref-key", default="ground_truth_label.is_error",
-                        help="Label key for reference file (default: ground_truth_label.is_error for parse_and_label output)")
+    parser.add_argument("--ref-key", default="consensus_is_error",
+                        help="Label key for reference file (default: consensus_is_error, the pseudo-labeling 0/1 vote)")
     parser.add_argument("--comp-key", default="error_found",
                         help="Label key for comparison file (default: error_found for pipeline output)")
     parser.add_argument("--batch-size", type=int, default=100,

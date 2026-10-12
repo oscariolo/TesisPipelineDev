@@ -19,6 +19,8 @@ class EmbeddingConfig(PydanticBaseModel):
     similarity_threshold: float = 0.8
     hf_device: str = "cpu"
     token: str = None
+    # False: still query the store (and keep saving to it) but always let the LLM answer.
+    use_embedding_cache: bool = True
     clearCollectionAtStartup: bool = False  # If True, delete the Milvus collection on startup (testing only)
 
 
@@ -87,8 +89,9 @@ class EmbeddingModel(BaseModel):
         matches = self._store_safe().search_batch([vector], top_k=1)
         hits = matches[0] if matches else []
         distance = hits[0].get("distance", 0.0) if hits else 0.0
+        matched = bool(hits) and distance >= self.config.similarity_threshold
 
-        if hits and distance >= self.config.similarity_threshold:
+        if matched and self.config.use_embedding_cache:
             logger.info(
                 "Batch #%d matched existing embedding with distance %.4f, skipping LLM",
                 batch.batch_id,
@@ -107,11 +110,28 @@ class EmbeddingModel(BaseModel):
                 similarity=distance,
             )
 
+        if matched:
+            logger.info(
+                "Batch #%d matched existing embedding with distance %.4f but the cache is ignored",
+                batch.batch_id,
+                distance,
+            )
+
         logger.info("Classifying batch #%d with LLM", batch.batch_id)
+        return self._classify_with_llm(batch, vector, batch_text, distance)
+
+    def _classify_with_llm(self, batch: LogBatch, vector: list[float], batch_text: str,
+                           similarity) -> BatchAnalysisResult:
+        """Classify with the LLM and remember the embedding for later hits.
+
+        ``embedding_hit`` stays False here (the answer did not come from the cache) even when the
+        lookup matched and the cache is simply being ignored; ``similarity`` keeps the measured
+        distance either way.
+        """
         fallback_result = self._fallback.analyze(batch)
         fallback_result.embedder_model_name = self.config.embedding_model_name
         fallback_result.embedding_hit = False
-        fallback_result.similarity = distance
+        fallback_result.similarity = similarity
         if fallback_result.is_valid_response: #solo guarda el embedding si la respuesta del modelo es valida
             self._store_safe().insert(
                 vector,

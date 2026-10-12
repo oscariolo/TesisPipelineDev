@@ -16,8 +16,10 @@ class _FakeVectorStore:
     def __init__(self, hits=None) -> None:
         self.hits = hits
         self.inserted: list[dict] = []
+        self.searched: list[list] = []
 
     def search_batch(self, vectors, top_k: int = 1):
+        self.searched.append(vectors)
         return [self.hits] if self.hits else [[] for _ in vectors]
 
     def insert(self, vector, raw_text, is_error, **fields):
@@ -39,9 +41,11 @@ class _StubFallback:
 class _StubEmbeddingModel(EmbeddingModel):
     """EmbeddingModel whose encoder, vector store and LLM call are all stubs."""
 
-    def __init__(self, store: _FakeVectorStore, fallback: _StubFallback) -> None:
+    def __init__(self, store: _FakeVectorStore, fallback: _StubFallback,
+                 use_embedding_cache: bool = True) -> None:
         self.config = EmbeddingConfig(
-            generative=GenerativeConfig(model_name="stub-model", backend="huggingface", contextWindow=4096)
+            generative=GenerativeConfig(model_name="stub-model", backend="huggingface", contextWindow=4096),
+            use_embedding_cache=use_embedding_cache,
         )
         self._encoder = object()
         self._store = store
@@ -51,12 +55,12 @@ class _StubEmbeddingModel(EmbeddingModel):
         return [[0.0] * 4 for _ in texts]
 
 
-def _hit(probability=0.87, **entity_overrides) -> dict:
+def _hit(probability=0.87, distance=0.93, **entity_overrides) -> dict:
     entity = {"is_error": True, "model_name": "stub-model", "embedder_model_name": "stub-embedder"}
     if probability is not None:
         entity["error_probability"] = probability
     entity.update(entity_overrides)
-    return {"distance": 0.93, "entity": entity}
+    return {"distance": distance, "entity": entity}
 
 
 class CachedProbabilityTest(unittest.TestCase):
@@ -108,6 +112,37 @@ class CachedProbabilityTest(unittest.TestCase):
         model.analyze(BATCH)
 
         self.assertEqual(store.inserted, [])
+
+    def test_ignoring_the_cache_still_queries_it_but_lets_the_llm_answer(self):
+        store = _FakeVectorStore(hits=[_hit(0.9, distance=0.91)])
+        fallback = _StubFallback(
+            BatchAnalysisResult(
+                batch_id=0, error_found=False, is_valid_response=True, error_probability=0.01,
+                model_name="stub-model",
+            )
+        )
+        model = _StubEmbeddingModel(store, fallback, use_embedding_cache=False)
+
+        result = model.analyze(BATCH)
+
+        self.assertEqual(len(store.searched), 1)                  # the store was still queried
+        self.assertEqual(fallback.calls, 1)                       # ... but the LLM answered
+        self.assertFalse(result.embedding_hit)                    # the answer is not a cache reuse
+        self.assertFalse(result.error_found)                      # the LLM's value, not the cached True
+        self.assertAlmostEqual(result.error_probability, 0.01)    # the LLM's own score
+        self.assertAlmostEqual(result.similarity, 0.91)           # the match is still recorded
+        self.assertEqual(len(store.inserted), 1)                  # saving continues
+
+    def test_the_cache_is_still_reused_by_default(self):
+        store = _FakeVectorStore(hits=[_hit(0.9, distance=0.91)])
+        fallback = _StubFallback(BatchAnalysisResult(batch_id=0, error_found=False, is_valid_response=True))
+        model = _StubEmbeddingModel(store, fallback)
+
+        result = model.analyze(BATCH)
+
+        self.assertEqual(fallback.calls, 0)
+        self.assertTrue(result.embedding_hit)
+        self.assertTrue(result.error_found)
 
     def test_the_gpu_sentinel_becomes_a_torch_device_string(self):
         model = _StubEmbeddingModel(_FakeVectorStore(), _StubFallback(BatchAnalysisResult(batch_id=0)))

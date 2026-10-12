@@ -65,8 +65,8 @@ docker compose up                    # CPU, no GPU
 
 ## Tests
 
-- Runnable unittest suites (run from `scripts/`, 49 tests total): `test_generative_response` (19),
-  `evaluation.test_model_evaluation` (15), `test_embedding_probability` (6), `test_naming` (5),
+- Runnable unittest suites (run from `scripts/`, 51 tests total): `test_generative_response` (19),
+  `evaluation.test_model_evaluation` (15), `test_embedding_probability` (8), `test_naming` (5),
   `test_evaluation_runner` (2) and `test_pipeline_telemetry` (2) — e.g. `python -m unittest test_naming`.
 - `test_batch_processing.py` is pytest-style (`monkeypatch`, `tmp_path`) but **pytest is not
   installed** in the venv — it silently does nothing under unittest. Install it (`pip install
@@ -104,8 +104,10 @@ docker compose up                    # CPU, no GPU
   (`--thinking` enables it); the switch only works through `apply_chat_template(enable_thinking=...)`,
   and enabling it auto-raises `--max-new-tokens` to 1024 because reasoning otherwise eats the budget
   and truncates the JSON answer.
-- `EmbeddingConfig` hardcodes `clearCollectionAtStartup=True` in `main.py` — the Milvus Lite
-  collection is wiped every run.
+- Embedding mode's Milvus Lite collection is wiped at startup only with `--testingMode` (off by
+  default, so the cache persists across runs). `--ignore-embedding-cache` still queries it and keeps
+  saving, but always uses the LLM's own answer — useful when the borrowed label/score must not decide
+  a run.
 - Generated artifacts, do not hand-edit: `analysis/*`, `embeddings/log_embeddings.db` (Milvus Lite —
   its `log_embeddings` collection carries `error_probability`, and a cache written before that field
   existed is dropped and rebuilt on startup), `fine_tuned_model/checkpoint-*`,
@@ -124,9 +126,10 @@ docker compose up                    # CPU, no GPU
   top_p=0.95`) masks most of the vocab with `-inf` (measured: 2 finite entries of 151936 at one step),
   so when a whole true/false group is masked the model re-forwards the prefix once for raw logits —
   one extra forward pass per batch. That same config means generation is **sampled**, so identical
-  inputs do not reproduce identical outputs. The reference dataset is extremely imbalanced (39 errors
-  in 10001 logs, first at index 362), so a short run usually has one class only and ROC is skipped by
-  design rather than reported as 0.0.
+  inputs do not reproduce identical outputs. Evaluation compares against
+  `pseudo_labeling/data/ground_truth_dataset.jsonl` by default (`--eval-ref-key consensus_is_error`),
+  which is imbalanced too (182 errors in 10001 logs), so a short run can still end up with one class
+  only and ROC is then skipped by design rather than reported as 0.0.
 - `.vscode/launch.json` is stale: its "Builder log dataset" config points at
   `scripts/log_analysis/dataset/builder.py`, which does not exist — the builder lives at
   `scripts/dataBuilder/builder.py`.

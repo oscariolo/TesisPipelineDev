@@ -66,6 +66,8 @@ main.py                CLI entry point
 | `--embedding-model-name` | `sentence-transformers/all-MiniLM-L6-v2` | embedding mode |
 | `--embedding-db` | `./embeddings/log_embeddings.db` | Milvus Lite `.db` path |
 | `--embedding-threshold` | `0.8` | min cosine similarity to reuse a stored classification |
+| `--ignore-embedding-cache` | off | query + keep saving the Milvus cache, but always take the LLM's own answer |
+| `--testingMode` (also `-testingMode`) | off | wipe the Milvus collection at startup (development only) |
 | `--json-file` | `None` | ingest parsed JSON instead of `--log-dir` |
 | `--log-dir` | `./logs` | `*.log` files (file mode) |
 | `--batch-size` | `100` | logs per batch |
@@ -78,7 +80,7 @@ main.py                CLI entry point
 | `--analysis-dir` | `./analysis` | parent folder; output goes to `<analysis-dir>/<model>/` |
 | `--output-dir` | `None` | alias for `--analysis-dir`; the `<model>` folder is always appended |
 | `--evaluate` | off | run the evaluation once the pipeline stops |
-| `--eval-reference` / `--eval-ref-key` | `dataset/dataset_slm_procesado_web.json` / `ground_truth_label.is_error` | ground truth and its label key |
+| `--eval-reference` / `--eval-ref-key` | `pseudo_labeling/data/ground_truth_dataset.jsonl` / `consensus_is_error` | ground truth (per log) and its label key |
 | `--eval-comp-key` | `error_found` | prediction key inside the pipeline output |
 | `--eval-batch-size` | `--batch-size` | how the ground truth is grouped to match batches |
 | `--eval-none-as` | `negative` | how `--evaluate` treats `None` labels |
@@ -115,8 +117,9 @@ python pseudo_labeling/consensus_engine.py
   votes.
 - `ground_truth_dataset.jsonl` rows are **per log**, and the error label is `consensus_is_error`
   (int 0/1; `consensus_category` holds the category) — **not** `error_found` / `ground_truth_label.is_error`.
-  Evaluate it with `--ref-key consensus_is_error` and a `--batch-size` matching the pipeline run, e.g.
-  `python evaluation/model_evaluation_viz.py pseudo_labeling/data/ground_truth_dataset.jsonl --ref-key consensus_is_error --batch-size 100`.
+  This file is the **default `--eval-reference`**, with `--eval-ref-key consensus_is_error`, so
+  `--evaluate` needs no flags; pass a `--batch-size` / `--eval-batch-size` that matches the pipeline
+  run, e.g. `python evaluation/model_evaluation_viz.py --batch-size 100`.
 
 ## Important facts
 
@@ -155,9 +158,11 @@ python pseudo_labeling/consensus_engine.py
 - **Embedding mode** wraps a generative model: on first sight of a log group it classifies with the
   LLM and stores the embedding + label + `error_probability` in the Milvus Lite `.db`; similar groups
   (cosine >= `--embedding-threshold`) are answered without the LLM, reusing that stored score.
-  `clearCollectionAtStartup=True` in `main.py` wipes that collection every run, so cross-run cache
-  hits do not happen. The encoder gets the same `--hf-device` value as the LLM, so `gpu` is mapped to
-  `cuda` (`SentenceTransformer` rejects `gpu`).
+  `--ignore-embedding-cache` still queries the store and keeps saving to it but always takes the
+  LLM's own answer — `embedding_hit` stays `False` (the answer is not a reuse) while `similarity`
+  still records the match that was not used. The collection is wiped at startup only with
+  `--testingMode`, so by default the cache persists across runs. The encoder gets the same
+  `--hf-device` value as the LLM, so `gpu` is mapped to `cuda` (`SentenceTransformer` rejects `gpu`).
 - **Evaluation** (`evaluation/modelEvaluation.py`) reports precision/recall/F1 for the positive
   (error-found) class, records unclassified `None` values to a separate file, and writes a JSON
   report. Nothing is sniffed from the inputs: `--model-name` and `--embedding-model-name` are stated
@@ -181,8 +186,9 @@ python pseudo_labeling/consensus_engine.py
   (key-then-boolean scan, raw re-forward when the warpers masked a group).
 - `python -m unittest evaluation.test_model_evaluation` (15 tests) — metrics, JSON report, None
   policy, `run_id` filtering, output-folder naming, ROC from a score key.
-- `python -m unittest test_embedding_probability` (6 tests) — a cache hit reports the stored
-  `error_probability`, a miss stores the fresh one, and a cache written before that field is rebuilt.
+- `python -m unittest test_embedding_probability` (8 tests) — a cache hit reports the stored
+  `error_probability`, a miss stores the fresh one, `--ignore-embedding-cache` queries the store but
+  keeps the LLM's answer, and a cache written before that field is rebuilt.
 - `python -m unittest test_naming` (5 tests) — model-name sanitizing and the per-model output folder.
 - `python -m unittest test_evaluation_runner` (2 tests) — `run_evaluation` writes the report and the
   plots into one folder, run-scoped.
