@@ -154,7 +154,7 @@ def load_processed_ids(path: Path) -> set[str]:
                     done.add(r["log_id"])
             except json.JSONDecodeError:
                 continue
-    logger.info("  ↩️  Resume: %d logs ya procesados en '%s'", len(done), path.name)
+    logger.info(" Resume: %d logs ya procesados en '%s'", len(done), path.name)
     return done
 
 
