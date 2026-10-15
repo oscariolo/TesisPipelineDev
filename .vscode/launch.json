@@ -74,18 +74,22 @@
       "args": [
         "--mode", "embedding",
         "--backend", "huggingface",
-        "--model-name", "Qwen/Qwen3-0.6B",
-        "--tokenizer-name", "Qwen/Qwen3-0.6B", //gguf file should contain the tokenizer, but we can specify it explicitly if needed
-        //"--gguf-file", "llama-3.2-1B-log-analyzer.f16.gguf",
+        "--model-name", "mradermacher/llama-3.2-1B-log-analyzer-GGUF",
+        "--tokenizer-name", "mradermacher/llama-3.2-1B-log-analyzer-GGUF", //gguf file should contain the tokenizer, but we can specify it explicitly if needed
+        "--gguf-file", "llama-3.2-1B-log-analyzer.f16.gguf",
         "--hf-device", "cuda:0",
         "--max-new-tokens", "512",
-        "--evaluate",
+        "--mask-ips",
+        "--mask-uuids",
+        "--mask-numbers",
         "--embedding-model-name", "sentence-transformers/all-MiniLM-L6-v2",
         "--embedding-db", "./embeddings/log_embeddings.db",
-        "--embedding-threshold", "0.8",
-        "--log-dir", "./logs",
+        "--embedding-threshold", "0.9",
+        "--log-dir", "./logs/ms-users.ucuenca-logs",
+        "--log-filter", "logback", //Logback/Spring Boot prefilter; explicit, not auto-detected
+        "--max-trace-lines", "15",
         "--output-dir", "./analysis",
-        "--batch-size", "10",
+        "--batch-size", "50",
         "--testingMode"
       ]
     },
@@ -95,10 +99,10 @@
       "request": "launch",
       "cwd": "${workspaceFolder}/scripts",
       "python": "${workspaceFolder}/scripts/.venv/bin/python",
-      "program": "${workspaceFolder}/scripts/log_analysis/dataset/builder.py",
+      "program": "${workspaceFolder}/scripts/dataBuilder/builder.py",
       "args": [
-        "./logs",
-        "./dataset/log_dataset.jsonl"
+        "./logs/ms-users.ucuenca-logs",
+        "./dataset/dtic_log_dataset.jsonl"
       ]
     },
       {
@@ -114,6 +118,7 @@
         "--comp-key", "error_found",
         "--batch-size", "10",
         "--none-as", "unclassified",
+        "--gguf-file", "llama-3.2-1B-log-analyzer.f16.gguf",
         "--model-name", "mradermacher/llama-3.2-1B-log-analyzer-GGUF",
         "--embedding-model-name", "sentence-transformers/all-MiniLM-L6-v2"
       ]
@@ -187,5 +192,6 @@
 hf.co/mradermacher/llama-3.2-1B-log-analyzer-GGUF:Q4_K_M 
 tokenizer: meta-llama/Llama-3.2-1B
 Qwen/Qwen3-0.6B
+google/gemma-4-26B-A4B
 
 */

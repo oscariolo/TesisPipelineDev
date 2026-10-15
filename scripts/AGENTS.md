@@ -34,6 +34,8 @@ log_analysis/
     naming.py          sanitize_model_name / model_output_dir — per-model folder naming
     log_ingestor.py    FileLogIngestor (logs/*.log), StreamLogIngestor (HTTP poll),
                        JsonLogIngestor (parsed JSON, uses log_data.template), LogMasker
+    log_filter.py      LogbackEventFilter — Logback/Spring Boot event parsing + prefilter rules
+                       (used by the ingestor and by pseudo_labeling/log_prefilter.py)
     log_embedder.py    LogVectorStore — Milvus Lite wrapper (create, insert, cosine search)
     pipeline.py        Orchestrator ingestor -> model -> writer; writes <model>/run_<run_id>.json
   models/
@@ -70,6 +72,8 @@ main.py                CLI entry point
 | `--testingMode` (also `-testingMode`) | off | wipe the Milvus collection at startup (development only) |
 | `--json-file` | `None` | ingest parsed JSON instead of `--log-dir` |
 | `--log-dir` | `./logs` | `*.log` files (file mode) |
+| `--log-filter` | `none` | `none` / `logback`: parse Logback events and keep only interesting ones (one entry per event) |
+| `--max-trace-lines` | `15` | stack-trace lines kept per event with `--log-filter logback` (0 = unlimited) |
 | `--batch-size` | `100` | logs per batch |
 | `--max-batches` | `None` | stop after N batches |
 | `--stream-url` / `--poll-interval` | `None` / `5.0` | live HTTP log stream |
@@ -120,6 +124,36 @@ python pseudo_labeling/consensus_engine.py
   This file is the **default `--eval-reference`**, with `--eval-ref-key consensus_is_error`, so
   `--evaluate` needs no flags; pass a `--batch-size` / `--eval-batch-size` that matches the pipeline
   run, e.g. `python evaluation/model_evaluation_viz.py --batch-size 100`.
+
+## Log filtering (ms-users corpus)
+
+`--log-filter logback` runs the Logback/Spring Boot prefilter **inside** the pipeline, before the
+analyzer. Decisions taken:
+
+- **The rules live in `log_analysis/core/log_filter.py`** as `LogbackEventFilter` (parsing, rules,
+  counters, report). `pseudo_labeling/log_prefilter.py` is a thin CLI over it and still re-exports
+  `iter_events` / `classify` / `prefilter`, so there is exactly one rule set for both paths.
+- **Activation is explicit** — `--log-filter logback`, default `none`, no auto-detection. Pointing it
+  at a non-Logback corpus raises on the first file instead of silently yielding an empty run (an
+  Apache/Nginx corpus parses as *zero* events, since every line looks like a stack-trace continuation).
+  It is already set on the ms-users config in `.vscode/launch.json`.
+- **One entry per kept event**, and `raw_text` is the source line **verbatim** plus its stack trace
+  (capped by `--max-trace-lines`, keeping the first N-1 lines and the last one). Verbatim means the
+  analysed text can be grepped back into the corpus; `event["raw_line"]` holds it.
+- **`--batch-size` counts entries** — with the filter on, that means *kept events*, so the same number
+  covers far more corpus than without it (the filter drops ~99%). The run records the unit and the
+  coverage: `run_<id>.json` carries `batch_unit: kept_events`, `log_filter`, `max_trace_lines` and a
+  `filter` block (totals, keep ratio, per-rule counts), and the model folder gets `filter_report.txt`.
+- Rules are by LOGGER / LEVEL / MESSAGE, **never by IP** (10.16.0.x is the cluster ingress and also
+  carries legitimate traffic). First matching rule wins, so a business-logger ERROR is reported as
+  `keep:business_logger`, not `keep:warn_error`.
+- The masker still applies after filtering; `--json-file` ignores the filter (already parsed input).
+
+Measured on `logs/ms-users.ucuenca-logs` (309 files, 15.8 GB): keep rate varies **0.18 %-3.75 %** per
+file, dominated by framework-request DEBUG lines (`RequestMappingHandlerMapping`, `DispatcherServlet`)
+with very few business events and single-digit ERRORs per file, so a ~400 MB sample only yields a
+handful of real error events. `--estimate-batches` returns `None` for filtered runs (the count is only
+known after reading the corpus, and the pre-scan would read 16 GB for a wrong number).
 
 ## Important facts
 
@@ -186,6 +220,10 @@ python pseudo_labeling/consensus_engine.py
   (key-then-boolean scan, raw re-forward when the warpers masked a group).
 - `python -m unittest evaluation.test_model_evaluation` (15 tests) — metrics, JSON report, None
   policy, `run_id` filtering, output-folder naming, ROC from a score key.
+- `python -m unittest test_log_filter` (26 tests) — Logback event grouping, `--max-trace-lines`, the
+  full rule table with precedence, verbatim rendering, filter counters, both ingestors with and
+  without the filter, and the foreign-format guard.
+- `python -m unittest test_log_prefilter` (4 tests) — the standalone prefilter CLI over the same class.
 - `python -m unittest test_embedding_probability` (8 tests) — a cache hit reports the stored
   `error_probability`, a miss stores the fresh one, `--ignore-embedding-cache` queries the store but
   keeps the LLM's answer, and a cache written before that field is rebuilt.
@@ -206,6 +244,10 @@ python pseudo_labeling/consensus_engine.py
   `None` (no ROC) if that also fails. The same config means generation is sampled: identical inputs do
   not reproduce identical outputs. In embedding mode the column is only empty for Ollama runs, failed
   responses and entries cached before the score existed — cache hits inherit the matched entry's score.
+- **Filtered runs are token-hungry per batch**: budget ~85 tokens per kept event (measured: 50 events
+  ≈ 4.2k tokens). Past the model window the failure is quiet — at `--batch-size 500` the prompt hit
+  41.5k tokens, the JSON answer still parsed, but `error_probability` became `None` because the raw
+  re-forward the warpers need could no longer run. Keep batches inside `--contextWindow`.
 - Only Ollama needs to be reachable (`localhost:11434` by default); the HF backend loads models
   locally with `device_map="auto"` and offloads to `./offloading` when VRAM is short.
 - `--hf-device` is not wired into HF loading — it does not move the generative model (it does pick

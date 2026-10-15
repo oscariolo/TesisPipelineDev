@@ -9,6 +9,7 @@ import json
 import httpx
 
 from log_analysis.core.log_entry import LogBatch, LogEntry
+from log_analysis.core.log_filter import LogbackEventFilter, render as render_event
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +24,28 @@ class LogIngestor(ABC):
 
 
 class FileLogIngestor(LogIngestor):
-    def __init__(self, log_dir: str | Path, batch_size: int = 100, masker=None):
+    """Reads `*.log` files. With `log_filter` set, each kept Logback event is one entry and
+    `batch_size` counts kept events instead of source lines."""
+
+    def __init__(self, log_dir: str | Path, batch_size: int = 100, masker=None,
+                 log_filter: LogbackEventFilter | None = None):
         super().__init__(batch_size)
         self.log_dir = Path(log_dir)
         self.masker = masker
+        self.log_filter = log_filter
+
+    @property
+    def filter_stats(self):
+        """Live counters of the event filter, or None when no filter is used."""
+        return None if self.log_filter is None else self.log_filter.stats
 
     def iter_batches(self) -> Generator[LogBatch, None, None]:
         file_paths = sorted(self.log_dir.glob("*.log"))
         if not file_paths:
             raise FileNotFoundError(f"Not found in {self.log_dir}")
+        if self.log_filter is not None:
+            yield from self._iter_filtered_batches(file_paths)
+            return
 
         batch_id = 0
         entries: list[LogEntry] = []
@@ -57,13 +71,63 @@ class FileLogIngestor(LogIngestor):
         if entries:
             yield LogBatch(batch_id=batch_id, entries=entries)
 
+    def _iter_filtered_batches(self, file_paths) -> Generator[LogBatch, None, None]:
+        """Batch the events the filter keeps, one LogEntry per event (header + stack trace)."""
+        assert self.log_filter is not None  # only reached when a filter is configured
+        batch_id = 0
+        entries: list[LogEntry] = []
+        global_idx = 0
+        for position, file_path in enumerate(file_paths):
+            parsed_before = self.log_filter.stats.events_total
+            with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+                for event in self.log_filter.iter_kept(handle, source=file_path.name):
+                    text = render_event(event)
+                    entries.append(
+                        LogEntry(
+                            index=global_idx,
+                            source_file=event["source_file"],
+                            raw_text=self.masker.mask(text) if self.masker else text,
+                        )
+                    )
+                    global_idx += 1
+                    if len(entries) >= self.batch_size:
+                        yield LogBatch(batch_id=batch_id, entries=entries)
+                        batch_id += 1
+                        entries = []
+            if self.log_filter.stats.events_total == parsed_before:
+                message = (
+                    f"No Logback events parsed in {file_path.name} — the file is not in "
+                    "Logback/Spring Boot format (--log-filter logback)"
+                )
+                if position == 0:
+                    raise ValueError(message)
+                logger.warning("%s; skipping it", message)
+        if entries:
+            yield LogBatch(batch_id=batch_id, entries=entries)
+
 
 class StreamLogIngestor(LogIngestor):
-    def __init__(self, url: str, batch_size: int = 100, poll_interval: float = 5.0, masker=None):
+    """Polls an HTTP log stream. With `log_filter` set, kept Logback events become the entries and
+    the filter state survives across polls, so an event split by a poll boundary is still whole."""
+
+    def __init__(self, url: str, batch_size: int = 100, poll_interval: float = 5.0, masker=None,
+                 log_filter: LogbackEventFilter | None = None):
         super().__init__(batch_size)
         self.url = url
         self.poll_interval = max(0.0, poll_interval)
         self.masker = masker
+        self.log_filter = log_filter
+
+    @property
+    def filter_stats(self):
+        return None if self.log_filter is None else self.log_filter.stats
+
+    def _entry(self, text: str, source: str, index: int) -> LogEntry:
+        return LogEntry(
+            index=index,
+            source_file=source,
+            raw_text=self.masker.mask(text) if self.masker else text,
+        )
 
     def iter_batches(self) -> Generator[LogBatch, None, None]:
         batch_id = 0
@@ -77,13 +141,14 @@ class StreamLogIngestor(LogIngestor):
                         line = line.strip()
                         if not line:
                             continue
-                        entries.append(
-                            LogEntry(
-                                index=global_idx,
-                                source_file=self.url,
-                                raw_text=self.masker.mask(line) if self.masker else line,
-                            )
-                        )
+                        if self.log_filter is not None:
+                            event = self.log_filter.feed_kept(line)
+                            if event is None:
+                                continue
+                            entries.append(self._entry(
+                                render_event(event), event["source_file"] or self.url, global_idx))
+                        else:
+                            entries.append(self._entry(line, self.url, global_idx))
                         global_idx += 1
                         if len(entries) >= self.batch_size:
                             yield LogBatch(batch_id=batch_id, entries=entries)
@@ -96,6 +161,12 @@ class StreamLogIngestor(LogIngestor):
                     e,
                     self.poll_interval,
                 )
+            if self.log_filter is not None:
+                pending = self.log_filter.flush_kept()
+                if pending is not None:
+                    entries.append(self._entry(
+                        render_event(pending), pending["source_file"] or self.url, global_idx))
+                    global_idx += 1
             if entries:
                 yield LogBatch(batch_id=batch_id, entries=entries)
                 batch_id += 1

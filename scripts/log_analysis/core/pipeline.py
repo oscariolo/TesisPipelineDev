@@ -90,6 +90,10 @@ class Pipeline:
             "run_info": self.run_info,
             "totals": dict(self._stats),
         }
+        # Event-filter counters (kept/total, per-rule, keep ratio) when a log filter is in use.
+        filter_stats = getattr(self.ingestor, "filter_stats", None)
+        if filter_stats is not None:
+            payload["filter"] = filter_stats.as_dict()
         if status == "finished":
             payload["finished_at"] = now
         try:

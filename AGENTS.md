@@ -35,6 +35,10 @@ python main.py --mode generative --backend huggingface --model-name HuggingFaceT
 python main.py --mode embedding                                    # vector lookup, LLM fallback on first sight
 python main.py --analysis-dir ./analysis --evaluate                 # output + evaluation in analysis/<model>/
 
+# Filter a Logback corpus before analysis (explicit flag; one entry per kept event)
+python main.py --mode generative --backend huggingface --model-name Qwen/Qwen3-0.6B \
+  --log-dir ./logs/ms-users.ucuenca-logs --log-filter logback --batch-size 50 --max-batches 20
+
 python dataBuilder/builder.py ./logs ./dataset/log_dataset.jsonl   # build dataset
 python dataBuilder/analyze_parsed_dataset.py ./dataset/dataset_slm_procesado_web.json --output ./analysis/dataset_stats.json
 
@@ -65,9 +69,10 @@ docker compose up                    # CPU, no GPU
 
 ## Tests
 
-- Runnable unittest suites (run from `scripts/`, 51 tests total): `test_generative_response` (19),
-  `evaluation.test_model_evaluation` (15), `test_embedding_probability` (8), `test_naming` (5),
-  `test_evaluation_runner` (2) and `test_pipeline_telemetry` (2) — e.g. `python -m unittest test_naming`.
+- Runnable unittest suites (run from `scripts/`, 81 tests total): `test_generative_response` (19),
+  `evaluation.test_model_evaluation` (15), `test_log_filter` (26), `test_embedding_probability` (8),
+  `test_naming` (5), `test_log_prefilter` (4), `test_evaluation_runner` (2) and
+  `test_pipeline_telemetry` (2) — e.g. `python -m unittest test_naming`.
 - `test_batch_processing.py` is pytest-style (`monkeypatch`, `tmp_path`) but **pytest is not
   installed** in the venv — it silently does nothing under unittest. Install it (`pip install
   pytest`) before running; do not add it to `requierements.txt` casually.
@@ -83,7 +88,7 @@ docker compose up                    # CPU, no GPU
 - Every CLI is a plain `argparse` `main()` guarded by `if __name__ == "__main__":`.
 - Output is one folder per model: `analysis/<model>/log_analysis.jsonl` (one `BatchAnalysisResult`
   per line — `error_found`, `error_probability` (P(error) from the logits at the boolean token, HF
-  backend only), `is_valid_response`, `raw_response`, plus telemetry: `run_id`,
+  backend only), `is_valid_response`, plus telemetry: `run_id`,
   `elapsed_seconds`, `entry_count`, `source_files`, `embedding_hit`, `similarity`,
   `error_description`), the matching `log_analysis.json`, and `run_<run_id>.json` (status, config,
   totals) which the dashboard reads. `--analysis-dir` / `--output-dir` set the parent; the `<model>`
@@ -130,6 +135,13 @@ docker compose up                    # CPU, no GPU
   `pseudo_labeling/data/ground_truth_dataset.jsonl` by default (`--eval-ref-key consensus_is_error`),
   which is imbalanced too (182 errors in 10001 logs), so a short run can still end up with one class
   only and ROC is then skipped by design rather than reported as 0.0.
+- `--log-filter logback` (off by default) parses Logback/Spring Boot events and keeps only
+  business-logger, WARN/ERROR/FATAL and framework-request events: one entry per kept event, `raw_text`
+  = the source line + its stack trace. It is never auto-detected, and a non-Logback corpus raises
+  instead of producing an empty run. `--batch-size` then counts **kept events**, not lines, so the
+  same value covers a very different amount of corpus: budget ~85 tokens per kept event and keep the
+  batch inside the model window — at `--batch-size 500` on Qwen3-0.6B the prompt hit 41.5k tokens
+  (>40960) and `error_probability` silently degraded to `None` even though the answer parsed.
 - `.vscode/launch.json` is stale: its "Builder log dataset" config points at
   `scripts/log_analysis/dataset/builder.py`, which does not exist — the builder lives at
   `scripts/dataBuilder/builder.py`.

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from log_analysis.core.log_filter import DEFAULT_MAX_TRACE_LINES, LogbackEventFilter
 from log_analysis.core.log_ingestor import FileLogIngestor, StreamLogIngestor, JsonLogIngestor, LogMasker
 from log_analysis.core.naming import model_output_dir
 from log_analysis.core.pipeline import Pipeline
@@ -20,11 +21,10 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
 
 models = [
-    "openai-community/gpt2",
-    "qwen3.6:latest",
-    "Qwen/Qwen2.5-1.5B-Instruct",
+    "llama-3.2-1B-log-analyzer-GGUF:Q4_K_M", #tokenizer: meta-llama/Llama-3.2-1B
+    "Qwen/Qwen3-0.6B",
+    "google/gemma-4-26B-A4B",
     "HuggingFaceTB/SmolLM2-1.7B"
-
 ]
 
 load_dotenv()
@@ -36,10 +36,12 @@ def _estimate_batches(args) -> int | None:
     """Estimate how many batches the input will produce (None for streams or on error).
 
     Mirrors the ingestor counting rules: non-empty lines for *.log files, items with a
-    template/raw_message for JSON input.
+    template/raw_message for JSON input. With `--log-filter logback` the kept-event count is only
+    known after reading the corpus, so this returns None instead of pre-scanning 16 GB for a number
+    the filter invalidates.
     """
     try:
-        if args.stream_url:
+        if args.stream_url or args.log_filter == "logback":
             return None
         count = 0
         if args.json_file:
@@ -77,6 +79,11 @@ def main() -> None:
                         help="Still query the Milvus cache and keep saving to it, but always take the LLM's own answer.")
     parser.add_argument("--json-file", default=None, help="Path to a JSON file containing parsed logs to ingest")
     parser.add_argument("--log-dir", type=Path, default="./logs")
+    parser.add_argument("--log-filter", choices=["none", "logback"], default="none",
+                        help="Filter before analysis: 'logback' parses Logback/Spring Boot events and keeps "
+                             "only business/severity/framework-request ones (default: none).")
+    parser.add_argument("--max-trace-lines", type=int, default=DEFAULT_MAX_TRACE_LINES,
+                        help="Stack-trace lines kept per event with --log-filter logback (default: 15, 0 = unlimited).")
     parser.add_argument("--analysis-dir", type=Path, default=Path("./analysis"),
                         help="Parent folder holding one subfolder per model (default: ./analysis).")
     parser.add_argument("--output-dir", type=Path, default=None,
@@ -117,12 +124,19 @@ def main() -> None:
     if args.mask_ips or args.mask_uuids or args.mask_numbers:
         masker = LogMasker(mask_ips=args.mask_ips, mask_uuids=args.mask_uuids, mask_numbers=args.mask_numbers)
 
+    log_filter = None
+    if args.log_filter == "logback":
+        if args.json_file:
+            print("Warning: --log-filter is ignored with --json-file (the JSON input is already parsed).")
+        else:
+            log_filter = LogbackEventFilter(max_trace_lines=args.max_trace_lines)
+
     if args.json_file:
         ingestor = JsonLogIngestor(args.json_file, batch_size=args.batch_size)
     elif args.stream_url:
-        ingestor = StreamLogIngestor(args.stream_url, batch_size=args.batch_size, poll_interval=args.poll_interval, masker=masker)
+        ingestor = StreamLogIngestor(args.stream_url, batch_size=args.batch_size, poll_interval=args.poll_interval, masker=masker, log_filter=log_filter)
     else:
-        ingestor = FileLogIngestor(args.log_dir, batch_size=args.batch_size, masker=masker)
+        ingestor = FileLogIngestor(args.log_dir, batch_size=args.batch_size, masker=masker, log_filter=log_filter)
     output_dir = model_output_dir(args.output_dir or args.analysis_dir, args.model_name)
     writer = JsonWriter(output_dir)
 
@@ -180,6 +194,10 @@ def main() -> None:
         "stream_url": args.stream_url,
         "output_dir": str(output_dir),
         "masking": {"ips": args.mask_ips, "uuids": args.mask_uuids, "numbers": args.mask_numbers},
+        "log_filter": args.log_filter,
+        "max_trace_lines": args.max_trace_lines if log_filter is not None else None,
+        # What one --batch-size unit counts (kept events when the Logback filter is on).
+        "batch_unit": "kept_events" if log_filter is not None else "entries",
         "expected_batches": _estimate_batches(args),
     }
     if args.mode == "embedding":
@@ -195,6 +213,14 @@ def main() -> None:
     except KeyboardInterrupt:
         # The normal way to end a stream; fall through so --evaluate still runs.
         print("\nInterrupted - pipeline stopped.")
+
+    if log_filter is not None:
+        report = log_filter.report()
+        print("\n" + report)
+        try:
+            (output_dir / "filter_report.txt").write_text(report + "\n", encoding="utf-8")
+        except OSError as e:
+            print(f"Could not write the filter report: {e}")
 
     if args.evaluate:
         _evaluate_run(args, output_dir, pipeline.run_id)
