@@ -13,6 +13,15 @@ class LogBatch(BaseModel):
     entries: list[LogEntry]
 
 
+def render_batch_text(batch: LogBatch) -> str:
+    """The exact text an analyzer sends for one batch.
+
+    Shared by the models and by the pipeline's failure register, so a recorded input is byte-for-byte
+    what the model was given.
+    """
+    return "\n".join(f"[{entry.index}] {entry.raw_text}" for entry in batch.entries)
+
+
 class AnalysisResult(BaseModel):
     log_index: int
     error_description: Optional[str] = None

@@ -74,6 +74,8 @@ main.py                CLI entry point
 | `--log-dir` | `./logs` | `*.log` files (file mode) |
 | `--log-filter` | `none` | `none` / `logback`: parse Logback events and keep only interesting ones (one entry per event) |
 | `--max-trace-lines` | `15` | stack-trace lines kept per event with `--log-filter logback` (0 = unlimited) |
+| `--failures-file` | `<model folder>/failed_batches.jsonl` | where the failure register is written |
+| `--failures-input-chars` | `20000` | chars of the offending input stored per failure (0 = metadata only, negative = unlimited) |
 | `--batch-size` | `100` | logs per batch |
 | `--max-batches` | `None` | stop after N batches |
 | `--stream-url` / `--poll-interval` | `None` / `5.0` | live HTTP log stream |
@@ -162,6 +164,15 @@ known after reading the corpus, and the pre-scan would read 16 GB for a wrong nu
   run_<run_id>.json}` plus `eval_report.json` and the PNGs when evaluated. `<model>` is the model
   name with `/ \ :` replaced by `-` (`log_analysis/core/naming.py`); `--analysis-dir` / `--output-dir`
   set the parent and the `<model>` folder is always appended, so no flag can write flat into it.
+  `failed_batches.jsonl` appears there too, but only when a batch actually failed.
+- **Failure register**: every batch the pipeline cannot process is appended to
+  `<model folder>/failed_batches.jsonl` (created on the first failure, never on a clean run) with
+  `failure` (`exception:<Type>` or `invalid_response`), `error_type` / `error_message`, the model's
+  `raw_response`, `entry_count` / `source_files` / `token_usage` / `elapsed_seconds`, and `input` —
+  the exact text the model was given, capped at `--failures-input-chars` (default 20000, `0` = metadata
+  only, negative = unlimited) with `input_chars` always reporting the full length. A raised call and an
+  unparseable answer look identical in the main JSONL (`is_valid_response: false`, no reason recorded
+  there by design); the run file's totals split them into `failed` and `invalid`.
 - **Output format**: JSONL, one line per batch —
   `run_id`, `batch_id`, `timestamp`, `error_found`, `error_probability`, `model_name`,
   `embedder_model_name`, `token_usage`, `is_valid_response`, `entry_count`, `source_files`,
@@ -220,9 +231,9 @@ known after reading the corpus, and the pre-scan would read 16 GB for a wrong nu
   (key-then-boolean scan, raw re-forward when the warpers masked a group).
 - `python -m unittest evaluation.test_model_evaluation` (15 tests) — metrics, JSON report, None
   policy, `run_id` filtering, output-folder naming, ROC from a score key.
-- `python -m unittest test_log_filter` (26 tests) — Logback event grouping, `--max-trace-lines`, the
-  full rule table with precedence, verbatim rendering, filter counters, both ingestors with and
-  without the filter, and the foreign-format guard.
+- `python -m unittest test_log_filter` (27 tests) — Logback event grouping, `--max-trace-lines`, the
+  full rule table with precedence, verbatim rendering, filter counters (including orphan lines), both
+  ingestors with and without the filter, and the foreign-format guard.
 - `python -m unittest test_log_prefilter` (4 tests) — the standalone prefilter CLI over the same class.
 - `python -m unittest test_embedding_probability` (8 tests) — a cache hit reports the stored
   `error_probability`, a miss stores the fresh one, `--ignore-embedding-cache` queries the store but
@@ -230,7 +241,8 @@ known after reading the corpus, and the pre-scan would read 16 GB for a wrong nu
 - `python -m unittest test_naming` (5 tests) — model-name sanitizing and the per-model output folder.
 - `python -m unittest test_evaluation_runner` (2 tests) — `run_evaluation` writes the report and the
   plots into one folder, run-scoped.
-- `python -m unittest test_pipeline_telemetry` (2 tests) — per-batch telemetry and run files.
+- `python -m unittest test_pipeline_telemetry` (8 tests) — per-batch telemetry, run files, and the
+  failure register (raised call vs unparseable answer, input caps, custom path, no file on success).
 - `test_batch_processing.py` is pytest-style (`monkeypatch`, `tmp_path`) but **pytest is not
   installed**, so it does nothing under unittest. Install pytest before relying on it.
 - No CI, no lint/typecheck/format config, no `pyproject.toml`/`setup.py`.

@@ -7,7 +7,7 @@ from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 
-from log_analysis.core.log_entry import LogBatch, BatchAnalysisResult
+from log_analysis.core.log_entry import LogBatch, BatchAnalysisResult, render_batch_text
 from log_analysis.models.base import BaseModel
 import ollama
 import torch
@@ -375,7 +375,7 @@ class GenerativeModel(BaseModel):
 
 
     def analyze(self, batch: LogBatch) -> BatchAnalysisResult:
-        batch_text = "\n".join(f"[{entry.index}] {entry.raw_text}" for entry in batch.entries)
+        batch_text = render_batch_text(batch)
 
         #cuando es perPrompt, se limpia historial de mensajes
         if self.config.keepHistory == "perPrompt":

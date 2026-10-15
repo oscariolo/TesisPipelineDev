@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from log_analysis.core.log_filter import DEFAULT_MAX_TRACE_LINES, LogbackEventFilter
 from log_analysis.core.log_ingestor import FileLogIngestor, StreamLogIngestor, JsonLogIngestor, LogMasker
 from log_analysis.core.naming import model_output_dir
-from log_analysis.core.pipeline import Pipeline
+from log_analysis.core.pipeline import DEFAULT_FAILURES_INPUT_CHARS, Pipeline
 from log_analysis.models.embedding import EmbeddingConfig, EmbeddingModel
 from log_analysis.models.generative import GenerativeConfig, GenerativeModel
 from log_analysis.observability import init_observability
@@ -84,6 +84,10 @@ def main() -> None:
                              "only business/severity/framework-request ones (default: none).")
     parser.add_argument("--max-trace-lines", type=int, default=DEFAULT_MAX_TRACE_LINES,
                         help="Stack-trace lines kept per event with --log-filter logback (default: 15, 0 = unlimited).")
+    parser.add_argument("--failures-file", default=None,
+                        help="Failure register path (default: <model folder>/failed_batches.jsonl).")
+    parser.add_argument("--failures-input-chars", type=int, default=DEFAULT_FAILURES_INPUT_CHARS,
+                        help="Chars of the offending input stored per failure (0 = metadata only, negative = unlimited).")
     parser.add_argument("--analysis-dir", type=Path, default=Path("./analysis"),
                         help="Parent folder holding one subfolder per model (default: ./analysis).")
     parser.add_argument("--output-dir", type=Path, default=None,
@@ -207,7 +211,9 @@ def main() -> None:
             "embedding_threshold": args.embedding_threshold,
             "embedding_cache": args.use_embedding_cache,
         })
-    pipeline = Pipeline(model, ingestor, writer, max_batches=args.max_batches, run_info=run_info)
+    pipeline = Pipeline(model, ingestor, writer, max_batches=args.max_batches, run_info=run_info,
+                        failures_path=args.failures_file,
+                        failures_input_chars=args.failures_input_chars)
     try:
         pipeline.run()
     except KeyboardInterrupt:

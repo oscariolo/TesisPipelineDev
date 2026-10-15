@@ -1,0 +1,91 @@
+{
+  "run_id": "20261015-231711",
+  "status": "finished",
+  "started_at": "2026-10-15T23:17:11+00:00",
+  "updated_at": "2026-10-15T23:38:46+00:00",
+  "run_info": {
+    "mode": "embedding",
+    "backend": "huggingface",
+    "model_name": "mradermacher/llama-3.2-1B-log-analyzer-GGUF",
+    "batch_size": 50,
+    "ollama_host": "localhost:11434",
+    "hf_device": "cuda:0",
+    "keep_history": "perPrompt",
+    "thinking": false,
+    "max_new_tokens": 512,
+    "log_dir": "logs/ms-users.ucuenca-logs",
+    "json_file": null,
+    "stream_url": null,
+    "output_dir": "analysis/mradermacher-llama-3.2-1B-log-analyzer-GGUF",
+    "masking": {
+      "ips": true,
+      "uuids": true,
+      "numbers": true
+    },
+    "log_filter": "logback",
+    "max_trace_lines": 15,
+    "batch_unit": "kept_events",
+    "expected_batches": null,
+    "embedding_model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_db": "./embeddings/log_embeddings.db",
+    "embedding_threshold": 0.9,
+    "embedding_cache": true
+  },
+  "totals": {
+    "batches": 4463,
+    "entries": 223104,
+    "errors": 88,
+    "invalid": 0,
+    "failed": 42,
+    "embedding_hits": 4329,
+    "embedding_misses": 92,
+    "elapsed_seconds": 1025.491
+  },
+  "filter": {
+    "events_total": 27752836,
+    "events_kept": 223104,
+    "keep_ratio": 0.008039,
+    "orphan_lines": 0,
+    "rules": {
+      "drop:trace": 23687576,
+      "drop:actuator_or_login_redirect": 2142497,
+      "drop:static_resource_handler": 1606313,
+      "drop:framework_other": 93346,
+      "keep:framework_request": 212791,
+      "keep:business_logger": 10143,
+      "keep:warn_error": 170
+    },
+    "kept_levels": {
+      "DEBUG": 212739,
+      "INFO": 7858,
+      "ERROR": 2266,
+      "WARN": 241
+    },
+    "kept_loggers": {
+      "s.w.s.m.m.a.RequestMappingHandlerMapping": 151249,
+      "o.s.web.servlet.DispatcherServlet": 60600,
+      "e.e.u.m.i.a.o.e.g.s.GoogleUserOutAdapter": 3017,
+      "e.e.u.m.i.a.o.e.a.s.AdUserOutAdappter": 2539,
+      "u.m.i.a.o.e.o.s.LdapEstudianteOutAdapter": 1645,
+      ".m.m.a.ExceptionHandlerExceptionResolver": 942,
+      "e.e.u.m.i.a.o.e.m.s.ApiGmailServiceImpl": 924,
+      "e.e.u.m.i.a.o.e.o.UsuarioOracleService": 777,
+      "e.e.u.m.i.a.o.e.a.UsuarioAs400Service": 742,
+      "e.u.m.i.a.o.e.o.s.LdapEmpleadoOutAdapter": 350,
+      "e.e.ucuenca.msusersucuenca.Application": 90,
+      "org.hibernate.dialect.Dialect": 55,
+      ".m.i.a.o.s.CreatePersonAccountOutAdapter": 35,
+      "o.s.ldap.odm.core.impl.ObjectMetaData": 30,
+      "JpaBaseConfiguration$JpaWebConfiguration": 28,
+      "e.e.u.m.i.a.o.s.StudentAccountOutAdapter": 26,
+      "e.u.m.i.a.o.e.a.c.AdApiClientInterceptor": 25,
+      "o.h.engine.jdbc.spi.SqlExceptionHelper": 9,
+      "com.zaxxer.hikari.pool.HikariPool": 8,
+      "m.i.a.o.s.DepartamentalAccountOutAdapter": 8,
+      "ConfigServletWebServerApplicationContext": 2,
+      "o.s.boot.SpringApplication": 2,
+      "com.zaxxer.hikari.pool.PoolBase": 1
+    }
+  },
+  "finished_at": "2026-10-15T23:38:46+00:00"
+}

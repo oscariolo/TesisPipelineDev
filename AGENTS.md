@@ -69,10 +69,10 @@ docker compose up                    # CPU, no GPU
 
 ## Tests
 
-- Runnable unittest suites (run from `scripts/`, 81 tests total): `test_generative_response` (19),
-  `evaluation.test_model_evaluation` (15), `test_log_filter` (26), `test_embedding_probability` (8),
-  `test_naming` (5), `test_log_prefilter` (4), `test_evaluation_runner` (2) and
-  `test_pipeline_telemetry` (2) — e.g. `python -m unittest test_naming`.
+- Runnable unittest suites (run from `scripts/`, 88 tests total): `test_generative_response` (19),
+  `evaluation.test_model_evaluation` (15), `test_log_filter` (27), `test_embedding_probability` (8),
+  `test_pipeline_telemetry` (8), `test_naming` (5), `test_log_prefilter` (4) and
+  `test_evaluation_runner` (2) — e.g. `python -m unittest test_naming`.
 - `test_batch_processing.py` is pytest-style (`monkeypatch`, `tmp_path`) but **pytest is not
   installed** in the venv — it silently does nothing under unittest. Install it (`pip install
   pytest`) before running; do not add it to `requierements.txt` casually.
@@ -123,6 +123,10 @@ docker compose up                    # CPU, no GPU
 - Pipeline output and its evaluation live together in `analysis/<model>/`; `python main.py --evaluate`
   fills the report and plots for that run only (scoped by `run_id`). In streaming mode the run never
   ends on its own, so the evaluation fires on Ctrl-C or `--max-batches`.
+- A batch the pipeline cannot process leaves a record in `<model folder>/failed_batches.jsonl` (kind,
+  exception, raw answer, and the exact input text, capped by `--failures-input-chars`); the main JSONL
+  shows only `is_valid_response: false` with no reason, and the run totals split `failed` (call raised)
+  from `invalid` (answer unparseable).
 - `error_probability` is only produced by the HF backend: it needs `generate(output_scores=True)`,
   so Ollama records `None`. In embedding mode a cache hit has no LLM call of its own and inherits the
   score stored with the entry it matched (`None` only for entries cached before that field existed),

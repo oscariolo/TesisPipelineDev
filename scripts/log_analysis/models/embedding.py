@@ -4,7 +4,7 @@ import time
 from pydantic import BaseModel as PydanticBaseModel
 
 from log_analysis.core.log_embedder import LogVectorStore
-from log_analysis.core.log_entry import LogBatch, BatchAnalysisResult
+from log_analysis.core.log_entry import LogBatch, BatchAnalysisResult, render_batch_text
 from log_analysis.models.base import BaseModel
 from log_analysis.models.generative import GenerativeConfig, GenerativeModel
 
@@ -81,7 +81,7 @@ class EmbeddingModel(BaseModel):
         return [vector.tolist() for vector in vectors]
 
     def analyze(self, batch: LogBatch) -> BatchAnalysisResult:
-        batch_text = "\n".join(f"[{entry.index}] {entry.raw_text}" for entry in batch.entries)
+        batch_text = render_batch_text(batch)
         start = time.perf_counter()
         [vector] = self._embed_batch([batch_text])
         logger.info("Embedded batch #%d in %.3fs", batch.batch_id, time.perf_counter() - start)

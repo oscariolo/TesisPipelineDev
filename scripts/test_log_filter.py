@@ -75,6 +75,17 @@ class ParsingTest(unittest.TestCase):
         event_filter = LogbackEventFilter(15)
         self.assertIsNone(event_filter.feed("\tat nowhere(N.java:1)"))
         self.assertIsNone(event_filter.flush())
+        self.assertEqual(event_filter.stats.orphan_lines, 1)   # input that produced nothing
+
+    def test_orphan_lines_are_reported(self):
+        path = _write(self.tmp, "logFile.truncated.log",
+                      "\tat a.b.C.d(C.java:1)\n" + SAMPLE.splitlines()[0] + "\n")
+        event_filter = LogbackEventFilter(15)
+        list(event_filter.iter_file(path))
+
+        self.assertEqual(event_filter.stats.orphan_lines, 1)
+        self.assertEqual(event_filter.stats.events_total, 1)
+        self.assertIn("Lineas sin evento", event_filter.report())
 
 
 class RuleTest(unittest.TestCase):

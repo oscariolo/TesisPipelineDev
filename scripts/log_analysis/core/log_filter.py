@@ -56,6 +56,7 @@ class FilterStats:
 
     events_total: int = 0
     events_kept: int = 0
+    orphan_lines: int = 0
     rules: Counter = field(default_factory=Counter)
     kept_levels: Counter = field(default_factory=Counter)
     kept_loggers: Counter = field(default_factory=Counter)
@@ -69,6 +70,7 @@ class FilterStats:
             "events_total": self.events_total,
             "events_kept": self.events_kept,
             "keep_ratio": round(self.keep_ratio, 6),
+            "orphan_lines": self.orphan_lines,
             "rules": dict(self.rules),
             "kept_levels": dict(self.kept_levels),
             "kept_loggers": dict(self.kept_loggers.most_common(top_loggers)),
@@ -142,6 +144,9 @@ class LogbackEventFilter:
             return done
         if self._current is not None:
             self._extra.append(line)
+        else:
+            # No event is open: this line belongs to nothing (e.g. a file that starts mid-trace).
+            self.stats.orphan_lines += 1
         return None
 
     def flush(self) -> dict | None:
@@ -241,6 +246,9 @@ def format_report(stats: dict) -> str:
         lines.insert(3, f"Archivos procesados : {stats['files']}")
     lines += ["-" * 60, "Decisiones por regla:"]
     lines += [f"  {r:<36}{n:>12,}" for r, n in sorted(stats.get("rules", {}).items(), key=lambda x: -x[1])]
+    if stats.get("orphan_lines"):
+        lines += ["-" * 60,
+                  f"  {'Lineas sin evento (no parseables)':<36}{stats['orphan_lines']:>12,}"]
     lines += ["-" * 60, "Niveles conservados:"]
     lines += [f"  {lv:<36}{n:>12,}" for lv, n in sorted(stats.get("kept_levels", {}).items(), key=lambda x: -x[1])]
     lines += ["-" * 60, "Top loggers conservados:"]
