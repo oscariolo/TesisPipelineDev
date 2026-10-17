@@ -1,0 +1,47 @@
+============================================================
+REPORTE DE PREFILTRADO
+============================================================
+Archivos procesados : 309
+Eventos totales     : 27,752,836
+Eventos conservados : 223,104 (0.804%)
+------------------------------------------------------------
+Decisiones por regla:
+  drop:trace                            23,687,576
+  drop:actuator_or_login_redirect        2,142,497
+  drop:static_resource_handler           1,606,313
+  keep:framework_request                   212,791
+  drop:framework_other                      93,346
+  keep:business_logger                      10,143
+  keep:warn_error                              170
+------------------------------------------------------------
+Niveles conservados:
+  DEBUG                                    212,739
+  INFO                                       7,858
+  ERROR                                      2,266
+  WARN                                         241
+------------------------------------------------------------
+Top loggers conservados:
+  s.w.s.m.m.a.RequestMappingHandlerMapping       151,249
+  o.s.web.servlet.DispatcherServlet               60,600
+  e.e.u.m.i.a.o.e.g.s.GoogleUserOutAdapter         3,017
+  e.e.u.m.i.a.o.e.a.s.AdUserOutAdappter            2,539
+  u.m.i.a.o.e.o.s.LdapEstudianteOutAdapter         1,645
+  .m.m.a.ExceptionHandlerExceptionResolver           942
+  e.e.u.m.i.a.o.e.m.s.ApiGmailServiceImpl            924
+  e.e.u.m.i.a.o.e.o.UsuarioOracleService             777
+  e.e.u.m.i.a.o.e.a.UsuarioAs400Service              742
+  e.u.m.i.a.o.e.o.s.LdapEmpleadoOutAdapter           350
+  e.e.ucuenca.msusersucuenca.Application              90
+  org.hibernate.dialect.Dialect                       55
+  .m.i.a.o.s.CreatePersonAccountOutAdapter            35
+  o.s.ldap.odm.core.impl.ObjectMetaData               30
+  JpaBaseConfiguration$JpaWebConfiguration            28
+  e.e.u.m.i.a.o.s.StudentAccountOutAdapter            26
+  e.u.m.i.a.o.e.a.c.AdApiClientInterceptor            25
+  o.h.engine.jdbc.spi.SqlExceptionHelper               9
+  com.zaxxer.hikari.pool.HikariPool                    8
+  m.i.a.o.s.DepartamentalAccountOutAdapter             8
+  ConfigServletWebServerApplicationContext             2
+  o.s.boot.SpringApplication                           2
+  com.zaxxer.hikari.pool.PoolBase                      1
+============================================================

@@ -98,19 +98,28 @@ Three stages, run in order from `scripts/` (this package's docstrings and log me
 Spanish; the rest of the repo is English). Outputs land in `pseudo_labeling/data/`.
 
 ```bash
-# 1. parse raw Apache/Nginx combined logs -> log_id + structured fields
-python pseudo_labeling/log_preprocessor.py                     # logs/webServer.log -> pseudo_labeling/data/processed_logs.jsonl
-python pseudo_labeling/log_preprocessor.py --skip-unparseable  # drop non-matching lines instead of keeping them empty
+# 0. filter the raw Logback corpus (ms-users) -> pseudo_labeling/data/filtered_events.jsonl (+ prefilter_report.txt)
+python pseudo_labeling/log_prefilter.py
+# 1. assign log_id (LOG-000001...) -> pseudo_labeling/data/ms_users/processed_logs.jsonl (--from-raw skips stage 0)
+python pseudo_labeling/log_preprocessor.py
 
-# 2. annotate EVERY log individually with 3 Ollama models (qwen2.5:7b, llama3.1:8b, mistral:7b)
+# 2. annotate EVERY log with 3 Ollama models (qwen2.5:7b, llama3.1:8b, mistral:7b; override with --models id=tag,...)
 python pseudo_labeling/batch_runner.py --mode test --limit 30  # smoke test (--limit required in test mode)
-python pseudo_labeling/batch_runner.py --mode full             # all logs
-python pseudo_labeling/batch_runner.py --mode test --limit 30 --only-model model_a
+python pseudo_labeling/batch_runner.py --mode full [--fast]    # --fast: reply true/false only, temperature 0
+python pseudo_labeling/batch_runner.py --mode full --only-model model_a
 
-# 3. majority vote (k >= 2) + Fleiss' kappa -> ground truth dataset
+# 3. majority vote (k >= 2) + Fleiss/Cohen kappa -> ground truth dataset
 python pseudo_labeling/consensus_engine.py
 ```
 
+- ms-users data lives in `pseudo_labeling/data/ms_users/`; the old webServer ground truth stays in
+  `pseudo_labeling/data/` (still the default `--eval-reference`: pass `--eval-reference` for ms-users).
+- Stage 2 never collapses duplicates in the dataset: each log keeps its own row, but identical events
+  (same level/logger/message/stack) reuse the model's earlier answer in memory (`from_cache: true`) —
+  the 223k kept events are only ~7.4k unique. Failed logs are not written, so a rerun retries them.
+- Annotation categories (ms-users): `NORMAL`, `AUTH_OR_POLICY_ERROR`, `USER_NOT_FOUND`,
+  `BACKEND_FAILURE`, `APPLICATION_EXCEPTION`, `SUSPICIOUS_ACTIVITY`, `GENERIC_ERROR` (fast mode only
+  emits `NORMAL`/`GENERIC_ERROR`).
 - Stage 2 fails fast if `processed_logs.jsonl` is missing (run stage 1 first), and needs the three
   models present in Ollama; it writes `results_model_{a,b,c}.jsonl` and **resumes** by skipping
   `log_id`s already in the output file. Per-log JSON is retried up to `--max-retries` (3), falling
@@ -118,9 +127,7 @@ python pseudo_labeling/consensus_engine.py
 - Stage 3 needs **2 or more** result files, uses **pandas** (installed, but *not* pinned in
   `requierements.txt`), and writes `ground_truth_dataset.jsonl/.csv`, `expert_validation_sample.csv`
   (stratified 5% sample) and `consensus_report.txt`.
-- Annotation categories: `NORMAL`, `HTTP_CLIENT_ERROR`, `HTTP_SERVER_ERROR`, `HTTP_REDIRECT_ISSUE`,
-  `SUSPICIOUS_REQUEST`, `GENERIC_ERROR`; a row's category comes from the majority of the non-`NORMAL`
-  votes.
+- A row's consensus category comes from the majority of the non-`NORMAL` votes.
 - `ground_truth_dataset.jsonl` rows are **per log**, and the error label is `consensus_is_error`
   (int 0/1; `consensus_category` holds the category) — **not** `error_found` / `ground_truth_label.is_error`.
   This file is the **default `--eval-reference`**, with `--eval-ref-key consensus_is_error`, so

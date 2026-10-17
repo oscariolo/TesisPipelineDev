@@ -8,3 +8,6 @@ scripts/.venv/
 
 scripts/__pycache__/
 NOTAS.txt
+scripts/pseudo_labeling/data/filtered_events.jsonl
+scripts/pseudo_labeling/data/ms_users/
+scripts/pseudo_labeling/data/ms_users_test/

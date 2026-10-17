@@ -22,8 +22,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Iterator
+
+# permite `python pseudo_labeling/<script>.py` desde scripts/ (sys.path[0] sería pseudo_labeling/)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from log_analysis.core.log_filter import (
     DEFAULT_MAX_TRACE_LINES,

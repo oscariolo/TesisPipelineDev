@@ -2,8 +2,8 @@
 Módulo 3: Consensus Engine — Votación Mayoritaria y Fleiss' Kappa
 =================================================================
 Lee los resultados de los 3 modelos (Módulo 2) y el dataset original,
-aplica votación por mayoría (k >= 2), calcula Fleiss' Kappa y extrae
-una muestra del 5% para validación manual.
+aplica votación por mayoría (k >= 2), calcula Fleiss' Kappa (global) y Cohen's Kappa
+(por pares), exporta los desacuerdos y extrae una muestra estratificada para validación manual.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from collections import Counter
 from pathlib import Path
 
 import pandas as pd
+from sklearn.metrics import cohen_kappa_score
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,7 +45,8 @@ def mode_or_fallback(categories: list[str]) -> str:
     return Counter(err_cats).most_common(1)[0][0]
 
 
-def run_consensus(logs_file: Path, models_files: list[Path], output_dir: Path, sample_frac: float) -> None:
+def run_consensus(logs_file: Path, models_files: list[Path], output_dir: Path,
+                  sample_frac: float, min_per_class: int = 50) -> None:
     logger.info("Iniciando Motor de Consenso Multimodelo")
 
     if not logs_file.exists():
@@ -62,6 +64,9 @@ def run_consensus(logs_file: Path, models_files: list[Path], output_dir: Path, s
         m_data = [json.loads(l) for l in open(m_file, "r", encoding="utf-8") if l.strip()]
         df_m = pd.DataFrame(m_data)
         if not df_m.empty:
+            if "failed" in df_m.columns:
+                df_m = df_m[~df_m["failed"].fillna(False).astype(bool)]
+            df_m = df_m.drop_duplicates(subset="log_id", keep="last")
             df_m.set_index("log_id", inplace=True)
             dfs_models.append((m_file.stem, df_m))
             logger.info("   -> %s: %d predicciones", m_file.name, len(df_m))
@@ -77,7 +82,7 @@ def run_consensus(logs_file: Path, models_files: list[Path], output_dir: Path, s
     for name, df_m in dfs_models:
         df_votes[f"is_error_{name}"] = df_m["is_error"].astype(int)
         df_votes[f"category_{name}"] = df_m["error_category"]
-        df_votes[f"reason_{name}"] = df_m["reasoning"]
+        df_votes[f"reason_{name}"] = df_m["reasoning"] if "reasoning" in df_m.columns else ""
         col_is_error.append(f"is_error_{name}")
         col_category.append(f"category_{name}")
         col_reasoning.append(f"reason_{name}")
@@ -97,7 +102,7 @@ def run_consensus(logs_file: Path, models_files: list[Path], output_dir: Path, s
 
     # 6. Unir y Formatear
     df_final = df_logs.join(df_votes, how="inner").reset_index()
-    cols_order = ["log_id", "timestamp", "method", "status_code", "path", 
+    cols_order = ["log_id", "timestamp", "level", "logger", "message", "source_file",
                   "consensus_is_error", "consensus_category", "votes_error"] + col_is_error + ["raw_text"] + col_reasoning
     df_final = df_final[[c for c in cols_order if c in df_final.columns]]
 
@@ -106,11 +111,23 @@ def run_consensus(logs_file: Path, models_files: list[Path], output_dir: Path, s
     df_final.to_json(output_dir / "ground_truth_dataset.jsonl", orient="records", lines=True, force_ascii=False)
     df_final.to_csv(output_dir / "ground_truth_dataset.csv", index=False, encoding="utf-8")
     
-    # 8. Muestreo 5%
-    try:
-        df_sample = df_final.groupby("consensus_is_error", group_keys=False).apply(lambda x: x.sample(frac=sample_frac, random_state=42))
-    except ValueError:
-        df_sample = df_final.sample(n=max(1, int(len(df_final) * sample_frac)), random_state=42)
+    # 7b. Cohen's Kappa por pares + desacuerdos (para justificar el trío de modelos)
+    pair_lines = []
+    for i in range(len(col_is_error)):
+        for j in range(i + 1, len(col_is_error)):
+            a, b = col_is_error[i], col_is_error[j]
+            kappa_ab = cohen_kappa_score(df_votes[a], df_votes[b]) if df_votes[a].nunique() + df_votes[b].nunique() > 2 else float("nan")
+            agree = (df_votes[a] == df_votes[b]).mean() * 100
+            pair_lines.append(f"  {a[9:]} vs {b[9:]}: kappa={kappa_ab:.4f} | acuerdo={agree:.2f}%")
+    disagreements = df_final[(df_final["votes_error"] > 0) & (df_final["votes_error"] < num_raters)]
+    disagreements.to_csv(output_dir / "disagreements.csv", index=False, encoding="utf-8")
+
+    # 8. Muestreo estratificado: sample_frac por clase, con un mínimo por clase (los errores son raros)
+    parts = []
+    for _, grp in df_final.groupby("consensus_is_error"):
+        n = min(len(grp), max(int(len(grp) * sample_frac), min_per_class))
+        parts.append(grp.sample(n=n, random_state=42))
+    df_sample = pd.concat(parts)
     df_sample.to_csv(output_dir / "expert_validation_sample.csv", index=False, encoding="utf-8")
 
     # Reporte Final
@@ -125,8 +142,11 @@ Logs etiquetados ERROR  : {errores} ({(errores/len(df_final))*100:.2f}%)
 Logs etiquetados NORMAL : {normales} ({(normales/len(df_final))*100:.2f}%)
 ------------------------------------------------------------
 Inter-Annotator Agreement (Fleiss' Kappa): {kappa:.4f}
+Cohen's Kappa por pares:
+{chr(10).join(pair_lines)}
+Logs con desacuerdo entre modelos: {len(disagreements)} (disagreements.csv)
 ============================================================
-Muestra experta guardada en: expert_validation_sample.csv
+Muestra experta ({len(df_sample)} logs) guardada en: expert_validation_sample.csv
 """
     
     # Guardar reporte en archivo de texto
@@ -140,15 +160,17 @@ Muestra experta guardada en: expert_validation_sample.csv
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--logs", default="pseudo_labeling/data/processed_logs.jsonl")
+    parser.add_argument("--logs", default="pseudo_labeling/data/ms_users/processed_logs.jsonl")
     parser.add_argument("--models", nargs="+", default=[
-        "pseudo_labeling/data/results_model_a.jsonl",
-        "pseudo_labeling/data/results_model_b.jsonl",
-        "pseudo_labeling/data/results_model_c.jsonl"
+        "pseudo_labeling/data/ms_users/results_model_a.jsonl",
+        "pseudo_labeling/data/ms_users/results_model_b.jsonl",
+        "pseudo_labeling/data/ms_users/results_model_c.jsonl"
     ])
-    parser.add_argument("--outdir", default="pseudo_labeling/data")
+    parser.add_argument("--outdir", default="pseudo_labeling/data/ms_users")
     parser.add_argument("--sample-frac", type=float, default=0.05)
+    parser.add_argument("--min-per-class", type=int, default=50,
+                        help="Mínimo de logs por clase en la muestra experta")
     args = parser.parse_args()
     
-    run_consensus(Path(args.logs), [Path(m) for m in args.models], Path(args.outdir), args.sample_frac)
+    run_consensus(Path(args.logs), [Path(m) for m in args.models], Path(args.outdir), args.sample_frac, args.min_per_class)
 
